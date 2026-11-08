@@ -2005,49 +2005,16 @@ diff --git a/data/src/main/sqldelight/tachiyomi/data/history.sq b/data/src/main/
 index 36ba894..0041f23 100644
 --- a/data/src/main/sqldelight/tachiyomi/data/history.sq
 +++ b/data/src/main/sqldelight/tachiyomi/data/history.sq
-@@ -26,6 +26,46 @@ FROM history
+@@ -26,6 +26,13 @@ FROM history
  WHERE manga_id IN :mangaIds
  ORDER BY manga_id, id;
 
 +getRecentResumeHistory:
-+SELECT H.manga_id, H.chapter_id
-+FROM (
-+    SELECT H.manga_id, max(H.read_at) AS read_at
-+    FROM history H
-+    JOIN chapter C ON C.id = H.chapter_id AND C.manga_id = H.manga_id
-+    WHERE H.read_at IS NOT NULL
-+      AND NOT EXISTS (
-+          SELECT 1 FROM excluded_scanlator
-+          WHERE excluded_scanlator.manga_id = H.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
-+      )
-+    GROUP BY H.manga_id
-+    HAVING EXISTS (SELECT 1 FROM manga M WHERE M.id = H.manga_id)
-+    AND EXISTS (
-+        SELECT 1
-+        FROM chapter C
-+        WHERE C.manga_id = H.manga_id AND C.user_read = 0
-+          AND NOT EXISTS (
-+              SELECT 1 FROM excluded_scanlator
-+              WHERE excluded_scanlator.manga_id = C.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
-+          )
-+    )
-+    ORDER BY read_at DESC, H.manga_id DESC
-+    LIMIT 5
-+) AS latest
-+-- Resolve equal read timestamps only for the selected titles.
-+JOIN history H ON H.id = (
-+    SELECT candidate.id
-+    FROM history candidate
-+    JOIN chapter C ON C.id = candidate.chapter_id AND C.manga_id = candidate.manga_id
-+    WHERE candidate.manga_id = latest.manga_id AND candidate.read_at = latest.read_at
-+      AND NOT EXISTS (
-+          SELECT 1 FROM excluded_scanlator
-+          WHERE excluded_scanlator.manga_id = candidate.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
-+      )
-+    ORDER BY candidate.id DESC
-+    LIMIT 1
-+)
-+ORDER BY latest.read_at DESC, latest.manga_id DESC;
++SELECT manga_id, chapter_id
++FROM history
++WHERE read_at IS NOT NULL
++ORDER BY read_at DESC, id DESC
++LIMIT 250;
 +
  resetHistoryById:
  UPDATE history
