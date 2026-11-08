@@ -1,4 +1,4 @@
-# Tachiyomi Lite (experimental)
+# Tachiyomi Lite v0.2 (experimental)
 
 A small, unofficial performance overlay for [Mihon](https://github.com/mihonapp/mihon), targeting lower-memory Android phones such as the Samsung Galaxy A16 5G with 4 GB RAM.
 
@@ -8,6 +8,7 @@ A small, unofficial performance overlay for [Mihon](https://github.com/mihonapp/
 - **Bounded network prefetch:** read the visible page first, preload fewer surrounding pages and use smaller download chunks when Lite Mode is on.
 - **Smaller Webtoon view cache** and cached-view trimming after Android low-memory signals.
 - **WebView return recovery:** retry nearby failed chapter pages after the built-in chapter WebView is closed. This **does not bypass Cloudflare/CAPTCHA**.
+- **Manual retry:** in Reader Settings → Lite, tap **Retry nearby failed pages** after completing verification.
 - Custom **Tachiyomi Lite** launcher label. Debug application ID remains `app.mihon.dev` — check for conflicts if you already have Mihon debug installed.
 
 The source code and settings UI are overlaid onto a pinned upstream Mihon revision during an automated build. The original Mihon repository is not copied into this repository.
@@ -16,8 +17,8 @@ The source code and settings UI are overlaid onto a pinned upstream Mihon revisi
 
 1. Open the [Actions tab](../../actions/workflows/build-tachiyomi-lite.yml).
 2. Select **Build Tachiyomi Lite APK** → **Run workflow**, or examine the latest automatic push build.
-3. After a **successful** workflow run, open **Artifacts** and download the debug APK ZIP.
-4. Extract it and install the appropriate APK on your phone (arm64-v8a if an ABI-specific build is produced).
+3. After a **successful** workflow run, open **Artifacts** and download the ZIP called `tachiyomi-lite-v0.2-samsung-a16-apk`.
+4. Extract the ZIP, then install `Tachiyomi-Lite-A16-arm64.apk` on your Samsung A16 5G.
 
 **Do not install an APK from a failed build.** Android may warn about sideloading. Back up your Mihon library before migration. Debug builds aren't production releases and aren't automatically updated.
 
@@ -38,6 +39,6 @@ For a reproducible build, check out the upstream SHA pinned in `.github/workflow
 
 ## Status and limitations
 
-This is experimental source code, **not a verified fast APK**. Local smoke tests validate changes to text anchors, not Kotlin compilation, function correctness, or on-device performance. GitHub Actions provides the first Android compile check. No device benchmarking has been performed yet. Long webtoon chapters, real sources, and login/session behavior must be tested on the Samsung Galaxy A16.
+The Android APK builds successfully on GitHub Actions for the v0.1 revision. The v0.2 revision must pass its own build before installation. Neither version is a device-benchmarked release. Local smoke tests validate changes to text anchors, not Kotlin compilation, function correctness, or on-device performance. GitHub Actions provides the first Android compile check. No device benchmarking has been performed yet. Long webtoon chapters, real sources, and login/session behavior must be tested on the Samsung Galaxy A16.
 
 Source licensing: Mihon is Apache-2.0 licensed. This overlay is also Apache-2.0, without official endorsement or affiliation.
