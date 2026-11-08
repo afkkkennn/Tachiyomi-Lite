@@ -63,7 +63,7 @@ import androidx.compose.foundation.layout.Column
         self.assertIn("trimPageCache()", out[READER / "ReaderActivity.kt"])
         self.assertIn("onRetryFailedPages = ::retryNearbyFailedPages", out[READER / "ReaderActivity.kt"])
         self.assertIn("Retry nearby failed pages", out[DIALOG])
-        self.assertIn("3 -> LiteSettingsPage()", out[DIALOG])
+        self.assertIn("3 -> LiteSettingsPage(onRetryFailedPages)", out[DIALOG])
 
     def test_changed_upstream_fails(self):
         files = self.fixtures()
