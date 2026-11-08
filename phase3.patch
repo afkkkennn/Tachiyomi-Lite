@@ -2015,15 +2015,21 @@ index 36ba894..0041f23 100644
 +    SELECT H.manga_id, max(H.read_at) AS read_at
 +    FROM history H
 +    JOIN chapter C ON C.id = H.chapter_id AND C.manga_id = H.manga_id
-+    LEFT JOIN excluded_scanlator ES ON ES.manga_id = H.manga_id AND ES.scanlator = C.remote_scanlator
-+    WHERE H.read_at IS NOT NULL AND ES.scanlator IS NULL
++    WHERE H.read_at IS NOT NULL
++      AND NOT EXISTS (
++          SELECT 1 FROM excluded_scanlator E
++          WHERE E.manga_id = H.manga_id AND E.scanlator = C.remote_scanlator
++      )
 +    GROUP BY H.manga_id
 +    HAVING EXISTS (SELECT 1 FROM manga M WHERE M.id = H.manga_id)
 +    AND EXISTS (
 +        SELECT 1
 +        FROM chapter C
-+        LEFT JOIN excluded_scanlator ES ON ES.manga_id = C.manga_id AND ES.scanlator = C.remote_scanlator
-+        WHERE C.manga_id = H.manga_id AND C.user_read = 0 AND ES.scanlator IS NULL
++        WHERE C.manga_id = H.manga_id AND C.user_read = 0
++          AND NOT EXISTS (
++              SELECT 1 FROM excluded_scanlator E
++              WHERE E.manga_id = C.manga_id AND E.scanlator = C.remote_scanlator
++          )
 +    )
 +    ORDER BY read_at DESC, H.manga_id DESC
 +    LIMIT 5
@@ -2033,8 +2039,11 @@ index 36ba894..0041f23 100644
 +    SELECT candidate.id
 +    FROM history candidate
 +    JOIN chapter C ON C.id = candidate.chapter_id AND C.manga_id = candidate.manga_id
-+    LEFT JOIN excluded_scanlator ES ON ES.manga_id = candidate.manga_id AND ES.scanlator = C.remote_scanlator
-+    WHERE candidate.manga_id = latest.manga_id AND candidate.read_at = latest.read_at AND ES.scanlator IS NULL
++    WHERE candidate.manga_id = latest.manga_id AND candidate.read_at = latest.read_at
++      AND NOT EXISTS (
++          SELECT 1 FROM excluded_scanlator E
++          WHERE E.manga_id = candidate.manga_id AND E.scanlator = C.remote_scanlator
++      )
 +    ORDER BY candidate.id DESC
 +    LIMIT 1
 +)
