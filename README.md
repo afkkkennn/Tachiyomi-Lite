@@ -31,7 +31,7 @@ python3 -m unittest discover -s tests -v
 python3 apply_lite.py mihon --check
 python3 apply_lite.py mihon
 cd mihon
-./gradlew :app:assembleStandardDebug --no-daemon
+./gradlew :app:assembleDebug --no-daemon
 ```
 
 For a reproducible build, check out the upstream SHA pinned in `.github/workflows/build-tachiyomi-lite.yml` before patching.
