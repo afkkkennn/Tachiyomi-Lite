@@ -44,6 +44,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 """,
             DIALOG: """
 import androidx.compose.foundation.layout.Column
+    onHideMenus: () -> Unit,
+    viewModel: ReaderSettingsViewModel,
         stringResource(MR.strings.custom_filter),
     )
                     2 -> ColorFilterPage(viewModel)
