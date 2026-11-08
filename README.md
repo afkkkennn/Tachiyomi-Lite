@@ -11,7 +11,7 @@ Kisap, formerly Tachiyomi Lite, is a lightweight manga reader built as an unoffi
 
 ## Low-memory reader features
 
-- **Auto Lite Mode** on devices reporting < 5 GiB of physical RAM. Overrides are available in Reader Settings → Lite.
+- **Balanced reader mode.** Normal preloading is the default. Choose **Always on** in Reader Settings → Lite to reduce preloading and the webtoon view cache.
 - **Bounded network prefetch:** read the visible page first, preload fewer surrounding pages and use smaller download chunks when Lite Mode is on.
 - **Smaller Webtoon view cache** and cached-view trimming after Android low-memory signals.
 - **Manual retry.** In Reader Settings → Lite, tap **Retry nearby failed pages** after completing verification.

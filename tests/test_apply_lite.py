@@ -94,9 +94,10 @@ import androidx.compose.foundation.layout.Column
     def test_patch(self):
         out = patch_files(self.fixtures())
         self.assertEqual(len(out), 9)
-        self.assertIn("liteMode() -> (index - 1)..(index + 2)", out[READER / "loader/HttpPageLoader.kt"])
+        self.assertIn("liteMode -> (index - 1)..(index + 2)", out[READER / "loader/HttpPageLoader.kt"])
         self.assertIn("ReaderLitePolicy.enabled(context)", out[READER / "loader/ChapterLoader.kt"])
-        self.assertIn("trimPageCache()", out[READER / "ReaderActivity.kt"])
+        self.assertIn("TRIM_MEMORY_UI_HIDDEN", out[READER / "ReaderActivity.kt"])
+        self.assertIn("mode(context) == ON", out[READER / "ReaderLitePolicy.kt"])
         self.assertIn("onRetryFailedPages = ::retryNearbyFailedPages", out[READER / "ReaderActivity.kt"])
         self.assertIn("Retry nearby failed pages", out[DIALOG])
         self.assertIn("3 -> LiteSettingsPage(onRetryFailedPages)", out[DIALOG])
