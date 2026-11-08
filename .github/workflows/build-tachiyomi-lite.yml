@@ -54,7 +54,7 @@ jobs:
           python3 lite/apply_lite.py mihon --check
           python3 lite/apply_lite.py mihon
 
-      - name: Compile standard debug APK
+      - name: Compile Android debug APKs
         run: |
           chmod +x gradlew
           # The default services.gradle.org URL can time out or return 504.
@@ -69,10 +69,18 @@ jobs:
           exit 1
         working-directory: mihon
 
-      - name: Upload installable APK
+      - name: Select Samsung A16 ARM64 APK
+        run: |
+          mkdir -p lite-dist
+          APK=$(find mihon/app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' -print -quit)
+          test -n "$APK" || { echo "ARM64 APK not found"; find mihon/app/build/outputs/apk/debug -type f; exit 1; }
+          cp "$APK" lite-dist/Tachiyomi-Lite-A16-arm64.apk
+          sha256sum lite-dist/*.apk
+
+      - name: Upload Samsung A16 APK
         uses: actions/upload-artifact@v4
         with:
-          name: tachiyomi-lite-v0.1-debug-apk
-          path: mihon/app/build/outputs/apk/debug/*.apk
+          name: tachiyomi-lite-v0.2-samsung-a16-apk
+          path: lite-dist/*.apk
           if-no-files-found: error
           retention-days: 14
