@@ -27,6 +27,8 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
     private var assistUrl: String? = null
+                        onHideMenus = { setMenuVisibility(false) },
+                        viewModel = settingsViewModel,
     override fun onResume() {
         super.onResume()
         viewModel.restartReadTimer()
@@ -57,6 +59,8 @@ import androidx.compose.foundation.layout.Column
         self.assertIn("liteMode() -> (index - 1)..(index + 2)", out[READER / "loader/HttpPageLoader.kt"])
         self.assertIn("ReaderLitePolicy.enabled(context)", out[READER / "loader/ChapterLoader.kt"])
         self.assertIn("trimPageCache()", out[READER / "ReaderActivity.kt"])
+        self.assertIn("onRetryFailedPages = ::retryNearbyFailedPages", out[READER / "ReaderActivity.kt"])
+        self.assertIn("Retry nearby failed pages", out[DIALOG])
         self.assertIn("3 -> LiteSettingsPage()", out[DIALOG])
 
     def test_changed_upstream_fails(self):
