@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Fail-closed Mihon source overlay for the experimental Kisap reader."""
-from pathlib import Path
 import argparse
+from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
 
 READER = Path("app/src/main/java/eu/kanade/tachiyomi/ui/reader")
 DIALOG = Path("app/src/main/java/eu/kanade/presentation/reader/settings/ReaderSettingsDialog.kt")
@@ -9,6 +11,7 @@ MANIFEST = Path("app/src/main/AndroidManifest.xml")
 APP_RES = Path("app/src/main/res")
 LAUNCHER_ICON = APP_RES / "mipmap/ic_launcher.xml"
 THEMES = APP_RES / "values/themes.xml"
+PHASE3_PATCH = Path(__file__).resolve().with_name("phase3.patch")
 BRAND_RESOURCES = (
     Path("drawable/kisap_foreground.xml"),
     Path("drawable/kisap_monochrome.xml"),
@@ -272,6 +275,38 @@ import eu.kanade.tachiyomi.ui.reader.ReaderLitePolicy""",
         "Splash screen branding")
     return files
 
+def apply_phase_three(root: Path, generated: dict[Path, str]) -> None:
+    """Apply the patch to staged sources so a failed hunk leaves the checkout intact."""
+    with TemporaryDirectory(prefix="kisap-phase3-") as temporary:
+        staging = Path(temporary)
+        git_apply = ["git", "apply"]
+        numstat = subprocess.run(
+            [*git_apply, "--numstat", "-z", str(PHASE3_PATCH)],
+            cwd=staging,
+            check=True,
+            stdout=subprocess.PIPE,
+            encoding="utf-8",
+        ).stdout
+        paths = [Path(row.split("\t", 2)[2]) for row in numstat.split("\0") if row]
+        for path in paths:
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"Invalid Phase 3 patch path: {path}")
+            source = root / path
+            content = generated.get(path)
+            if content is None and source.is_file():
+                content = source.read_text(encoding="utf-8")
+            if content is not None:
+                dest = staging / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with dest.open("w", encoding="utf-8", newline="\n") as stream:
+                    stream.write(content)
+        subprocess.run(
+            [*git_apply, "--whitespace=error", str(PHASE3_PATCH)],
+            cwd=staging,
+            check=True,
+        )
+        generated.update({path: (staging / path).read_text(encoding="utf-8") for path in paths})
+
 def apply(root: Path, check: bool = False) -> None:
     affected = (
         READER / "loader/HttpPageLoader.kt",
@@ -288,15 +323,16 @@ def apply(root: Path, check: bool = False) -> None:
     branding = Path(__file__).resolve().parent / "branding"
     for resource in BRAND_RESOURCES:
         generated[APP_RES / resource] = (branding / resource).read_text(encoding="utf-8")
+    apply_phase_three(root, generated)
     if check:
-        print(f"PASS: {len(affected)} Mihon files and {len(BRAND_RESOURCES)} branding resources ready for overlay")
+        print(f"PASS: Kisap Phase 3 overlay validated across {len(generated)} files")
         return
     for path, content in generated.items():
         dest = root / path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
         print("Updated", path)
-    print("Kisap experimental overlay applied.")
+    print("Kisap Phase 3 overlay applied.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

@@ -1,11 +1,23 @@
 """Smoke-test the fail-closed Mihon source overlay without requiring the Android SDK."""
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from xml.etree import ElementTree
 from apply_lite import apply, patch_files, READER, DIALOG
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
+READER_ACTIVITY = READER / "ReaderActivity.kt"
+PHASE3_FIXTURE = f"""diff --git a/{READER_ACTIVITY} b/{READER_ACTIVITY}
+--- a/{READER_ACTIVITY}
++++ b/{READER_ACTIVITY}
+@@ -5,3 +5,3 @@
+                         onHideMenus = {{ setMenuVisibility(false) }},
+-                        onRetryFailedPages = ::retryNearbyFailedPages,
++                        onRetryFailedPages = ::retryAfterVerification,
+                         viewModel = settingsViewModel,
+"""
 
 class OverlayTest(unittest.TestCase):
     def fixtures(self):
@@ -92,12 +104,14 @@ import androidx.compose.foundation.layout.Column
     def test_applied_branding_resolves_launcher_and_splash_resources(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            for path, content in self.fixtures().items():
-                target = root / path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
-
-            apply(root)
+            self.write_fixtures(root)
+            phase3 = root / "fixture.patch"
+            phase3.write_text(PHASE3_FIXTURE, encoding="utf-8")
+            with patch("apply_lite.PHASE3_PATCH", phase3):
+                apply(root, check=True)
+                self.assertNotIn("onRetryFailedPages", (root / READER_ACTIVITY).read_text(encoding="utf-8"))
+                apply(root)
+            self.assertIn("::retryAfterVerification", (root / READER_ACTIVITY).read_text(encoding="utf-8"))
 
             app = root / "app/src/main"
             resources = app / "res"
@@ -125,6 +139,28 @@ import androidx.compose.foundation.layout.Column
                 splash.findtext("item[@name='windowSplashScreenAnimatedIcon']"),
                 launcher.find("foreground").attrib[f"{ANDROID}drawable"],
             )
+
+    def test_phase_three_context_mismatch_does_not_write_base_overlay(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_fixtures(root)
+            phase3 = root / "fixture.patch"
+            phase3.write_text(
+                PHASE3_FIXTURE.replace("::retryNearbyFailedPages", "::unknownRetry"),
+                encoding="utf-8",
+            )
+            with patch("apply_lite.PHASE3_PATCH", phase3):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    apply(root)
+            for path, content in self.fixtures().items():
+                self.assertEqual((root / path).read_text(encoding="utf-8"), content)
+            self.assertFalse((root / READER / "ReaderLitePolicy.kt").exists())
+
+    def write_fixtures(self, root):
+        for path, content in self.fixtures().items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
 
     def test_changed_upstream_fails(self):
         files = self.fixtures()

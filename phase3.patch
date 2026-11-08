@@ -1,0 +1,2174 @@
+diff --git a/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceLoadFailure.kt b/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceLoadFailure.kt
+new file mode 100644
+index 0000000..7c60690
+--- /dev/null
++++ b/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceLoadFailure.kt
+@@ -0,0 +1,30 @@
++package eu.kanade.presentation.browse
++
++import tachiyomi.data.source.NoResultsException
++import tachiyomi.domain.source.model.SourceNotInstalledException
++import java.net.SocketException
++import java.net.SocketTimeoutException
++import java.net.UnknownHostException
++
++internal data class BrowseSourceLoadFailure(
++    val error: Throwable,
++    val isAppend: Boolean,
++    val canOpenWebView: Boolean,
++)
++
++internal fun browseSourceLoadFailure(
++    refreshError: Throwable?,
++    appendError: Throwable?,
++    isHttpSource: Boolean,
++): BrowseSourceLoadFailure? {
++    // The paging source also uses an error to report a successfully fetched empty page.
++    val refreshFailure = refreshError?.takeUnless { it is NoResultsException }
++    val error = refreshFailure ?: appendError?.takeUnless { it is NoResultsException } ?: return null
++
++    val canOpenWebView = isHttpSource && when (error) {
++        is SocketException, is SocketTimeoutException, is UnknownHostException, is SourceNotInstalledException -> false
++        else -> true
++    }
++
++    return BrowseSourceLoadFailure(error, isAppend = refreshFailure == null, canOpenWebView = canOpenWebView)
++}
+diff --git a/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceScreen.kt b/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceScreen.kt
+index 08d211e..a20c9f7 100644
+--- a/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceScreen.kt
++++ b/app/src/main/java/eu/kanade/presentation/browse/BrowseSourceScreen.kt
+@@ -1,6 +1,10 @@
+ package eu.kanade.presentation.browse
+
++import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.calculateEndPadding
++import androidx.compose.foundation.layout.calculateStartPadding
++import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.lazy.grid.GridCells
+ import androidx.compose.material3.SnackbarDuration
+@@ -10,14 +14,18 @@ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.platform.LocalLayoutDirection
+ import androidx.paging.LoadState
+ import androidx.paging.compose.LazyPagingItems
+ import eu.kanade.presentation.browse.components.BrowseSourceComfortableGrid
+ import eu.kanade.presentation.browse.components.BrowseSourceCompactGrid
+ import eu.kanade.presentation.browse.components.BrowseSourceList
++import eu.kanade.presentation.browse.components.BrowseSourceLoadErrorBanner
++import eu.kanade.presentation.browse.components.BrowseSourceLoadErrorScreen
+ import eu.kanade.presentation.components.AppBar
+ import eu.kanade.presentation.util.formattedMessage
+ import eu.kanade.tachiyomi.source.Source
++import eu.kanade.tachiyomi.source.online.HttpSource
+ import kotlinx.coroutines.flow.StateFlow
+ import mihon.icons.materialsymbols.MaterialSymbols
+ import mihon.icons.materialsymbols.automirroredrounded.Help
+@@ -48,20 +56,33 @@ fun BrowseSourceContent(
+     onLocalSourceHelpClick: () -> Unit,
+     onMangaClick: (Manga) -> Unit,
+     onMangaLongClick: (Manga) -> Unit,
++    showLoadFeedback: Boolean = false,
+ ) {
+     val context = LocalContext.current
+
+-    val errorState = mangaList.loadState.refresh.takeIf { it is LoadState.Error }
+-        ?: mangaList.loadState.append.takeIf { it is LoadState.Error }
++    val refresh = mangaList.loadState.refresh
++    val refreshError = (refresh as? LoadState.Error)?.error
++    val appendError = (mangaList.loadState.append as? LoadState.Error)?.error
++    val error = refreshError ?: appendError
++    val sourceFailure = if (showLoadFeedback) {
++        browseSourceLoadFailure(
++            refreshError = refreshError,
++            appendError = appendError.takeUnless { refresh is LoadState.Loading },
++            isHttpSource = source is HttpSource,
++        )
++    } else {
++        null
++    }
++    val onFailureWebViewClick = onWebViewClick.takeIf { sourceFailure?.canOpenWebView == true }
+
+-    val getErrorMessage: (LoadState.Error) -> String = { state ->
+-        with(context) { state.error.formattedMessage }
++    val getErrorMessage: (Throwable) -> String = { cause ->
++        with(context) { cause.formattedMessage }
+     }
+
+-    LaunchedEffect(errorState) {
+-        if (mangaList.itemCount > 0 && errorState != null && errorState is LoadState.Error) {
++    LaunchedEffect(error, showLoadFeedback) {
++        if (!showLoadFeedback && mangaList.itemCount > 0 && error != null) {
+             val result = snackbarHostState.showSnackbar(
+-                message = getErrorMessage(errorState),
++                message = getErrorMessage(error),
+                 actionLabel = context.stringResource(MR.strings.action_retry),
+                 duration = SnackbarDuration.Indefinite,
+             )
+@@ -72,18 +93,26 @@ fun BrowseSourceContent(
+         }
+     }
+
+-    if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {
++    if (mangaList.itemCount == 0 && refresh is LoadState.Loading) {
+         LoadingScreen(Modifier.padding(contentPadding))
+         return
+     }
+
+     if (mangaList.itemCount == 0) {
++        if (sourceFailure != null) {
++            BrowseSourceLoadErrorScreen(
++                failure = sourceFailure,
++                onRetry = mangaList::retry,
++                onWebViewClick = onFailureWebViewClick,
++                onHelpClick = if (source is LocalSource) onLocalSourceHelpClick else onHelpClick,
++                modifier = Modifier.padding(contentPadding),
++            )
++            return
++        }
++
+         EmptyScreen(
+             modifier = Modifier.padding(contentPadding),
+-            message = when (errorState) {
+-                is LoadState.Error -> getErrorMessage(errorState)
+-                else -> stringResource(MR.strings.no_results_found)
+-            },
++            message = error?.let(getErrorMessage) ?: stringResource(MR.strings.no_results_found),
+             actions = if (source is LocalSource) {
+                 listOf(
+                     EmptyScreenAction(
+@@ -116,32 +145,49 @@ fun BrowseSourceContent(
+         return
+     }
+
+-    when (displayMode) {
+-        LibraryDisplayMode.ComfortableGrid -> {
+-            BrowseSourceComfortableGrid(
+-                mangaList = mangaList,
+-                columns = columns,
+-                contentPadding = contentPadding,
+-                onMangaClick = onMangaClick,
+-                onMangaLongClick = onMangaLongClick,
+-            )
+-        }
+-        LibraryDisplayMode.List -> {
+-            BrowseSourceList(
+-                mangaList = mangaList,
+-                contentPadding = contentPadding,
+-                onMangaClick = onMangaClick,
+-                onMangaLongClick = onMangaLongClick,
++    Column(modifier = Modifier.fillMaxSize()) {
++        val resultsPadding = if (sourceFailure != null) {
++            val layoutDirection = LocalLayoutDirection.current
++            val start = contentPadding.calculateStartPadding(layoutDirection)
++            val end = contentPadding.calculateEndPadding(layoutDirection)
++            BrowseSourceLoadErrorBanner(
++                failure = sourceFailure,
++                onRetry = mangaList::retry,
++                onWebViewClick = onFailureWebViewClick,
++                modifier = Modifier.padding(start = start, top = contentPadding.calculateTopPadding(), end = end),
+             )
++            PaddingValues(start = start, end = end, bottom = contentPadding.calculateBottomPadding())
++        } else {
++            contentPadding
+         }
+-        LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
+-            BrowseSourceCompactGrid(
+-                mangaList = mangaList,
+-                columns = columns,
+-                contentPadding = contentPadding,
+-                onMangaClick = onMangaClick,
+-                onMangaLongClick = onMangaLongClick,
+-            )
++
++        when (displayMode) {
++            LibraryDisplayMode.ComfortableGrid -> {
++                BrowseSourceComfortableGrid(
++                    mangaList = mangaList,
++                    columns = columns,
++                    contentPadding = resultsPadding,
++                    onMangaClick = onMangaClick,
++                    onMangaLongClick = onMangaLongClick,
++                )
++            }
++            LibraryDisplayMode.List -> {
++                BrowseSourceList(
++                    mangaList = mangaList,
++                    contentPadding = resultsPadding,
++                    onMangaClick = onMangaClick,
++                    onMangaLongClick = onMangaLongClick,
++                )
++            }
++            LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
++                BrowseSourceCompactGrid(
++                    mangaList = mangaList,
++                    columns = columns,
++                    contentPadding = resultsPadding,
++                    onMangaClick = onMangaClick,
++                    onMangaLongClick = onMangaLongClick,
++                )
++            }
+         }
+     }
+ }
+diff --git a/app/src/main/java/eu/kanade/presentation/browse/components/BrowseSourceLoadError.kt b/app/src/main/java/eu/kanade/presentation/browse/components/BrowseSourceLoadError.kt
+new file mode 100644
+index 0000000..749beff
+--- /dev/null
++++ b/app/src/main/java/eu/kanade/presentation/browse/components/BrowseSourceLoadError.kt
+@@ -0,0 +1,179 @@
++package eu.kanade.presentation.browse.components
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.FlowRow
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.AlertDialog
++import androidx.compose.material3.Button
++import androidx.compose.material3.ButtonDefaults
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.heading
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.style.TextAlign
++import androidx.compose.ui.unit.dp
++import eu.kanade.presentation.browse.BrowseSourceLoadFailure
++import eu.kanade.presentation.util.formattedMessage
++import tachiyomi.i18n.MR
++import tachiyomi.presentation.core.i18n.stringResource
++
++@Composable
++internal fun BrowseSourceLoadErrorScreen(
++    failure: BrowseSourceLoadFailure,
++    onRetry: () -> Unit,
++    onWebViewClick: (() -> Unit)?,
++    onHelpClick: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Column(
++        modifier = modifier
++            .fillMaxSize()
++            .verticalScroll(rememberScrollState())
++            .padding(24.dp),
++        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
++        horizontalAlignment = Alignment.CenterHorizontally,
++    ) {
++        Text(
++            text = failureTitle(failure),
++            style = MaterialTheme.typography.headlineSmall,
++            textAlign = TextAlign.Center,
++            modifier = Modifier.semantics {
++                heading()
++                liveRegion = LiveRegionMode.Polite
++            },
++        )
++        BrowseSourceLoadErrorDetails(failure, onWebViewClick != null, TextAlign.Center)
++        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
++            Button(onClick = onRetry) {
++                Text(stringResource(MR.strings.action_retry))
++            }
++            if (onWebViewClick != null) {
++                OutlinedButton(onClick = onWebViewClick) {
++                    Text(stringResource(MR.strings.action_open_in_web_view))
++                }
++            }
++            TextButton(onClick = onHelpClick) {
++                Text(stringResource(MR.strings.label_help))
++            }
++        }
++    }
++}
++
++@Composable
++internal fun BrowseSourceLoadErrorBanner(
++    failure: BrowseSourceLoadFailure,
++    onRetry: () -> Unit,
++    onWebViewClick: (() -> Unit)?,
++    modifier: Modifier = Modifier,
++) {
++    var showDetails by remember(failure) { mutableStateOf(false) }
++    val title = failureTitle(failure)
++    Surface(
++        modifier = modifier.fillMaxWidth(),
++        color = MaterialTheme.colorScheme.errorContainer,
++        contentColor = MaterialTheme.colorScheme.onErrorContainer,
++    ) {
++        Column(modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp)) {
++            Text(
++                text = title,
++                style = MaterialTheme.typography.titleSmall,
++                modifier = Modifier.semantics {
++                    heading()
++                    liveRegion = LiveRegionMode.Polite
++                },
++            )
++            val buttonColors = ButtonDefaults.textButtonColors(
++                contentColor = MaterialTheme.colorScheme.onErrorContainer,
++            )
++            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
++                TextButton(onClick = onRetry, colors = buttonColors) {
++                    Text(stringResource(MR.strings.action_retry))
++                }
++                TextButton(onClick = { showDetails = true }, colors = buttonColors) {
++                    Text(stringResource(MR.strings.action_show_errors))
++                }
++            }
++        }
++    }
++
++    if (showDetails) {
++        AlertDialog(
++            onDismissRequest = { showDetails = false },
++            title = { Text(title) },
++            text = {
++                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
++                    BrowseSourceLoadErrorDetails(failure, onWebViewClick != null, TextAlign.Start)
++                }
++            },
++            dismissButton = {
++                TextButton(onClick = { showDetails = false }) {
++                    Text(stringResource(MR.strings.action_close))
++                }
++            },
++            confirmButton = {
++                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)) {
++                    if (onWebViewClick != null) {
++                        TextButton(onClick = {
++                            showDetails = false
++                            onWebViewClick()
++                        }) {
++                            Text(stringResource(MR.strings.action_open_in_web_view))
++                        }
++                    }
++                    TextButton(onClick = {
++                        showDetails = false
++                        onRetry()
++                    }) {
++                        Text(stringResource(MR.strings.action_retry))
++                    }
++                }
++            },
++        )
++    }
++}
++
++@Composable
++private fun BrowseSourceLoadErrorDetails(failure: BrowseSourceLoadFailure, hasWebView: Boolean, textAlign: TextAlign) {
++    val context = LocalContext.current
++    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
++        Text(
++            text = with(context) { failure.error.formattedMessage },
++            style = MaterialTheme.typography.bodyMedium,
++            textAlign = textAlign,
++            modifier = Modifier.fillMaxWidth(),
++        )
++        if (hasWebView) {
++            Text(
++                text = stringResource(MR.strings.browse_source_webview_recovery),
++                style = MaterialTheme.typography.bodyMedium,
++                textAlign = textAlign,
++                modifier = Modifier.fillMaxWidth(),
++            )
++        }
++    }
++}
++
++@Composable
++private fun failureTitle(failure: BrowseSourceLoadFailure): String {
++    return stringResource(
++        if (failure.isAppend) MR.strings.browse_source_load_more_failed else MR.strings.browse_source_load_failed,
++    )
++}
+diff --git a/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt b/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt
+new file mode 100644
+index 0000000..213920b
+--- /dev/null
++++ b/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt
+@@ -0,0 +1,57 @@
++package eu.kanade.presentation.library.components
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.material3.Card
++import androidx.compose.material3.Icon
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import mihon.icons.materialsymbols.MaterialSymbols
++import mihon.icons.materialsymbols.roundedfilled.PlayArrow
++import tachiyomi.i18n.MR
++import tachiyomi.presentation.core.i18n.stringResource
++
++@Composable
++fun LibraryResumeCard(
++    title: String,
++    chapterName: String,
++    onClick: () -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    Card(
++        onClick = onClick,
++        modifier = modifier.fillMaxWidth(),
++    ) {
++        Row(
++            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
++            horizontalArrangement = Arrangement.spacedBy(12.dp),
++            verticalAlignment = Alignment.CenterVertically,
++        ) {
++            Icon(
++                imageVector = MaterialSymbols.RoundedFilled.PlayArrow,
++                contentDescription = null,
++                tint = MaterialTheme.colorScheme.primary,
++            )
++            Column {
++                Text(
++                    text = stringResource(MR.strings.action_resume),
++                    style = MaterialTheme.typography.titleSmall,
++                )
++                Text(
++                    text = if (chapterName.isBlank()) title else "$title · $chapterName",
++                    style = MaterialTheme.typography.bodySmall,
++                    maxLines = 1,
++                    overflow = TextOverflow.Ellipsis,
++                )
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt b/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt
+index 085f9c9..524a32a 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt
+@@ -44,6 +44,14 @@ fun ReaderError(
+             color = MaterialTheme.colorScheme.onBackground,
+             textAlign = TextAlign.Center,
+         )
++        if (onOpenInWebView != null) {
++            Text(
++                text = stringResource(MR.strings.reader_verify_in_webview),
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onBackground,
++                textAlign = TextAlign.Center,
++            )
++        }
+         Button(onClick = onRetry, modifier = buttonModifier) {
+             Text(stringResource(MR.strings.action_retry))
+         }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderAppBars.kt b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderAppBars.kt
+index f802e88..51eb9bf 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderAppBars.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderAppBars.kt
+@@ -172,6 +172,9 @@ fun ReaderAppBars(
+                     onClickOrientation = onClickOrientation,
+                     cropEnabled = cropEnabled,
+                     onClickCropBorder = onClickCropBorder,
++                    navigateUp = navigateUp,
++                    bookmarked = bookmarked,
++                    onToggleBookmarked = onToggleBookmarked,
+                     onClickSettings = onClickSettings,
+                 )
+             }
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderBottomBar.kt b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderBottomBar.kt
+index b4e87ac..ec7a2c5 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderBottomBar.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/appbars/ReaderBottomBar.kt
+@@ -1,22 +1,34 @@
+ package eu.kanade.presentation.reader.appbars
+
+ import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.IconButton
++import androidx.compose.material3.IconToggleButton
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.platform.LocalContext
++import eu.kanade.presentation.components.AppBar
++import eu.kanade.presentation.components.AppBarActions
+ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
++import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.ToolbarLayout
+ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
++import mihon.app.di.appGraph
+ import mihon.icons.custommaterialsymbols.CustomMaterialSymbols
+ import mihon.icons.custommaterialsymbols.rounded.CropOff
+ import mihon.icons.materialsymbols.MaterialSymbols
++import mihon.icons.materialsymbols.automirroredrounded.ArrowBack
++import mihon.icons.materialsymbols.rounded.Bookmark
+ import mihon.icons.materialsymbols.rounded.Crop
+ import mihon.icons.materialsymbols.rounded.Settings
++import mihon.icons.materialsymbols.roundedfilled.Bookmark
+ import tachiyomi.i18n.MR
+ import tachiyomi.presentation.core.i18n.stringResource
++import tachiyomi.presentation.core.util.collectAsState
+
+ @Composable
+ fun ReaderBottomBar(
+@@ -26,34 +38,78 @@ fun ReaderBottomBar(
+     onClickOrientation: () -> Unit,
+     cropEnabled: Boolean,
+     onClickCropBorder: () -> Unit,
++    navigateUp: () -> Unit,
++    bookmarked: Boolean,
++    onToggleBookmarked: () -> Unit,
+     onClickSettings: () -> Unit,
+     modifier: Modifier = Modifier,
+ ) {
++    val layout by LocalContext.current.appGraph.readerPreferences.toolbarLayout.collectAsState()
+     Row(
+         modifier = modifier
+             .pointerInput(Unit) {},
+-        horizontalArrangement = Arrangement.SpaceEvenly,
++        horizontalArrangement = when (layout) {
++            ToolbarLayout.STANDARD -> Arrangement.SpaceEvenly
++            ToolbarLayout.LEFT_HANDED -> Arrangement.Absolute.Left
++            ToolbarLayout.RIGHT_HANDED -> Arrangement.Absolute.Right
++        },
+         verticalAlignment = Alignment.CenterVertically,
+     ) {
+-        IconButton(onClick = onClickReadingMode) {
+-            Icon(
+-                imageVector = readingMode.icon,
+-                contentDescription = stringResource(MR.strings.viewer),
+-            )
+-        }
++        if (layout == ToolbarLayout.STANDARD) {
++            IconButton(onClick = onClickReadingMode) {
++                Icon(
++                    imageVector = readingMode.icon,
++                    contentDescription = stringResource(MR.strings.viewer),
++                )
++            }
+
+-        IconButton(onClick = onClickOrientation) {
+-            Icon(
+-                imageVector = orientation.icon,
+-                contentDescription = stringResource(MR.strings.rotation_type),
+-            )
+-        }
++            IconButton(onClick = onClickOrientation) {
++                Icon(
++                    imageVector = orientation.icon,
++                    contentDescription = stringResource(MR.strings.rotation_type),
++                )
++            }
+
+-        IconButton(onClick = onClickCropBorder) {
+-            Icon(
+-                imageVector = if (cropEnabled) MaterialSymbols.Rounded.Crop else CustomMaterialSymbols.Rounded.CropOff,
+-                contentDescription = stringResource(MR.strings.pref_crop_borders),
+-            )
++            IconButton(onClick = onClickCropBorder) {
++                Icon(
++                    imageVector = if (cropEnabled) {
++                        MaterialSymbols.Rounded.Crop
++                    } else {
++                        CustomMaterialSymbols.Rounded.CropOff
++                    },
++                    contentDescription = stringResource(MR.strings.pref_crop_borders),
++                )
++            }
++        } else {
++            IconButton(onClick = navigateUp) {
++                Icon(
++                    imageVector = MaterialSymbols.AutoMirroredRounded.ArrowBack,
++                    contentDescription = stringResource(MR.strings.action_bar_up_description),
++                )
++            }
++
++            IconToggleButton(checked = bookmarked, onCheckedChange = { onToggleBookmarked() }) {
++                Icon(
++                    imageVector = if (bookmarked) {
++                        MaterialSymbols.RoundedFilled.Bookmark
++                    } else {
++                        MaterialSymbols.Rounded.Bookmark
++                    },
++                    contentDescription = stringResource(
++                        if (bookmarked) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
++                    ),
++                )
++            }
++
++            Box {
++                AppBarActions(
++                    actions = listOf(
++                        AppBar.OverflowAction(stringResource(MR.strings.viewer), onClickReadingMode),
++                        AppBar.OverflowAction(stringResource(MR.strings.rotation_type), onClickOrientation),
++                        AppBar.OverflowAction(stringResource(MR.strings.pref_crop_borders), onClickCropBorder),
++                    ),
++                )
++            }
+         }
+
+         IconButton(onClick = onClickSettings) {
+diff --git a/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt b/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
+index 2894876..35b0314 100644
+--- a/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
++++ b/app/src/main/java/eu/kanade/presentation/reader/settings/GeneralSettingsPage.kt
+@@ -34,6 +34,18 @@ private val flashColors = listOf(
+
+ @Composable
+ internal fun ColumnScope.GeneralPage(viewModel: ReaderSettingsViewModel) {
++    val toolbarLayoutPref = viewModel.preferences.toolbarLayout
++    val toolbarLayout by toolbarLayoutPref.collectAsState()
++    SettingsChipRow(MR.strings.reader_controls_layout) {
++        ReaderPreferences.ToolbarLayout.entries.forEach { layout ->
++            FilterChip(
++                selected = toolbarLayout == layout,
++                onClick = { toolbarLayoutPref.set(layout) },
++                label = { Text(stringResource(layout.titleRes)) },
++            )
++        }
++    }
++
+     val readerTheme by viewModel.preferences.readerTheme.collectAsState()
+
+     val flashPageState by viewModel.preferences.flashOnPageChange.collectAsState()
+diff --git a/app/src/main/java/eu/kanade/presentation/webview/WebViewScreenContent.kt b/app/src/main/java/eu/kanade/presentation/webview/WebViewScreenContent.kt
+index 8efbee7..62cab3a 100644
+--- a/app/src/main/java/eu/kanade/presentation/webview/WebViewScreenContent.kt
++++ b/app/src/main/java/eu/kanade/presentation/webview/WebViewScreenContent.kt
+@@ -83,6 +83,8 @@ fun WebViewScreenContent(
+     onClearCookies: (String) -> Unit,
+     headers: Map<String, String> = emptyMap(),
+     onUrlChange: (String) -> Unit = {},
++    onWebPageFinished: () -> Unit = {},
++    onWebViewCrashed: () -> Unit = onNavigateUp,
+ ) {
+     val coroutineScope = rememberCoroutineScope()
+
+@@ -123,6 +125,9 @@ fun WebViewScreenContent(
+
+             override fun onPageFinished(view: WebView, url: String?) {
+                 super.onPageFinished(view, url)
++                if (url != null && (url.startsWith("https://", true) || url.startsWith("http://", true))) {
++                    onWebPageFinished()
++                }
+                 scope.launch {
+                     val html = view.getHtml()
+                     showCloudflareHelp = "window._cf_chl_opt" in html || "Ray ID is" in html
+@@ -171,7 +176,7 @@ fun WebViewScreenContent(
+                         "priority=${detail.rendererPriorityAtExit()}, url=$currentUrl"
+                 }
+                 view.context.toast(MR.strings.information_webview_crashed, Toast.LENGTH_LONG)
+-                onNavigateUp()
++                onWebViewCrashed()
+                 return true
+             }
+         }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt
+index abcdf16..08d7063 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/browse/source/browse/BrowseSourceScreen.kt
+@@ -237,6 +237,7 @@ data class BrowseSourceScreen(
+                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                     }
+                 },
++                showLoadFeedback = true,
+             )
+         }
+
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
+index becfc91..30ebfaa 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
+@@ -5,6 +5,7 @@ import androidx.activity.compose.ReportDrawnWhen
+ import androidx.compose.animation.graphics.res.animatedVectorResource
+ import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
+ import androidx.compose.animation.graphics.vector.AnimatedImageVector
++import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.material3.SnackbarHost
+ import androidx.compose.material3.SnackbarHostState
+@@ -18,7 +19,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.platform.LocalHapticFeedback
+ import androidx.compose.ui.platform.LocalUriHandler
++import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.util.fastAll
++import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import cafe.adriel.voyager.navigator.LocalNavigator
+ import cafe.adriel.voyager.navigator.Navigator
+@@ -30,6 +33,7 @@ import eu.kanade.presentation.category.components.ChangeCategoryDialog
+ import eu.kanade.presentation.library.DeleteLibraryMangaDialog
+ import eu.kanade.presentation.library.LibrarySettingsDialog
+ import eu.kanade.presentation.library.components.LibraryContent
++import eu.kanade.presentation.library.components.LibraryResumeCard
+ import eu.kanade.presentation.library.components.LibraryToolbar
+ import eu.kanade.presentation.manga.components.LibraryBottomActionMenu
+ import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
+@@ -90,6 +94,11 @@ data object LibraryTab : Tab {
+         val viewModel = metroViewModel<LibraryViewModel>()
+         val settingsViewModel = metroViewModel<LibrarySettingsViewModel>()
+         val state by viewModel.state.collectAsStateWithLifecycle()
++        val resumeTarget = if (!state.isLoading && state.searchQuery == null && !state.selectionMode) {
++            viewModel.resumeTarget.collectAsStateWithLifecycle(minActiveState = Lifecycle.State.RESUMED).value
++        } else {
++            null
++        }
+
+         val snackbarHostState = remember { SnackbarHostState() }
+
+@@ -113,33 +122,56 @@ data object LibraryTab : Tab {
+                     defaultCategoryTitle = stringResource(MR.strings.label_default),
+                     page = state.coercedActiveCategoryIndex,
+                 )
+-                LibraryToolbar(
+-                    hasActiveFilters = state.hasActiveFilters,
+-                    selectedCount = state.selection.size,
+-                    title = title,
+-                    onClickUnselectAll = viewModel::clearSelection,
+-                    onClickSelectAll = viewModel::selectAll,
+-                    onClickInvertSelection = viewModel::invertSelection,
+-                    onClickFilter = viewModel::showSettingsDialog,
+-                    onClickRefresh = { scope.launch { onClickRefresh(state.activeCategory) } },
+-                    onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
+-                    onClickOpenRandomManga = {
+-                        scope.launch {
+-                            val randomItem = viewModel.getRandomLibraryItemForCurrentCategory()
+-                            if (randomItem != null) {
+-                                navigator.push(MangaScreen(randomItem.libraryManga.manga.id))
+-                            } else {
+-                                snackbarHostState.showSnackbar(
+-                                    context.stringResource(MR.strings.information_no_entries_found),
+-                                )
++                Column {
++                    LibraryToolbar(
++                        hasActiveFilters = state.hasActiveFilters,
++                        selectedCount = state.selection.size,
++                        title = title,
++                        onClickUnselectAll = viewModel::clearSelection,
++                        onClickSelectAll = viewModel::selectAll,
++                        onClickInvertSelection = viewModel::invertSelection,
++                        onClickFilter = viewModel::showSettingsDialog,
++                        onClickRefresh = { scope.launch { onClickRefresh(state.activeCategory) } },
++                        onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
++                        onClickOpenRandomManga = {
++                            scope.launch {
++                                val randomItem = viewModel.getRandomLibraryItemForCurrentCategory()
++                                if (randomItem != null) {
++                                    navigator.push(MangaScreen(randomItem.libraryManga.manga.id))
++                                } else {
++                                    snackbarHostState.showSnackbar(
++                                        context.stringResource(MR.strings.information_no_entries_found),
++                                    )
++                                }
+                             }
+-                        }
+-                    },
+-                    searchQuery = state.searchQuery,
+-                    onSearchQueryChange = viewModel::search,
+-                    // For scroll overlay when no tab
+-                    scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
+-                )
++                        },
++                        searchQuery = state.searchQuery,
++                        onSearchQueryChange = viewModel::search,
++                        // For scroll overlay when no tab
++                        scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
++                    )
++                    if (resumeTarget != null) {
++                        LibraryResumeCard(
++                            title = resumeTarget.title,
++                            chapterName = resumeTarget.chapter.name,
++                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
++                            onClick = {
++                                scope.launch {
++                                    val chapter = viewModel.getResumeChapter(resumeTarget)
++                                    if (chapter != null) {
++                                        context.startActivity(
++                                            ReaderActivity.newIntent(context, chapter.mangaId, chapter.id),
++                                        )
++                                    } else {
++                                        snackbarHostState.showSnackbar(
++                                            context.stringResource(MR.strings.no_next_chapter),
++                                        )
++                                    }
++                                }
++                            },
++                        )
++                    }
++                }
+             },
+             bottomBar = {
+                 LibraryBottomActionMenu(
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
+index f0d30fe..23b621a 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
+@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.Flow
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.catch
+ import kotlinx.coroutines.flow.combine
+ import kotlinx.coroutines.flow.debounce
+ import kotlinx.coroutines.flow.distinctUntilChanged
+@@ -40,11 +41,13 @@ import kotlinx.coroutines.flow.flatMapLatest
+ import kotlinx.coroutines.flow.flowOf
+ import kotlinx.coroutines.flow.flowOn
+ import kotlinx.coroutines.flow.map
++import kotlinx.coroutines.flow.mapLatest
+ import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.flow.update
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.plus
+ import kotlinx.coroutines.withContext
++import logcat.LogPriority
+ import mihon.core.common.utils.mutate
+ import mihon.core.metro.AppCoroutineScope
+ import mihon.domain.library.model.search.QueryNode
+@@ -54,12 +57,15 @@ import tachiyomi.core.common.preference.TriState
+ import tachiyomi.core.common.util.lang.SubscriberGate
+ import tachiyomi.core.common.util.lang.compareToWithCollator
+ import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
++import tachiyomi.core.common.util.system.logcat
+ import tachiyomi.domain.category.interactor.GetCategories
+ import tachiyomi.domain.category.interactor.SetMangaCategories
+ import tachiyomi.domain.category.model.Category
+ import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
++import tachiyomi.domain.chapter.interactor.GetChapter
+ import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+ import tachiyomi.domain.chapter.model.Chapter
++import tachiyomi.domain.history.interactor.GetHistory
+ import tachiyomi.domain.history.interactor.GetNextChapters
+ import tachiyomi.domain.library.model.LibraryDisplayMode
+ import tachiyomi.domain.library.model.LibraryManga
+@@ -67,6 +73,7 @@ import tachiyomi.domain.library.model.LibrarySort
+ import tachiyomi.domain.library.model.sort
+ import tachiyomi.domain.library.service.LibraryPreferences
+ import tachiyomi.domain.manga.interactor.GetLibraryManga
++import tachiyomi.domain.manga.interactor.GetManga
+ import tachiyomi.domain.manga.model.Manga
+ import tachiyomi.domain.manga.model.MangaUpdate
+ import tachiyomi.domain.manga.model.applyFilter
+@@ -85,7 +92,10 @@ class LibraryViewModel(
+     private val getLibraryManga: GetLibraryManga,
+     private val getCategories: GetCategories,
+     private val getTracksPerManga: GetTracksPerManga,
++    private val getHistory: GetHistory,
+     private val getNextChapters: GetNextChapters,
++    private val getManga: GetManga,
++    private val getChapter: GetChapter,
+     private val getChaptersByMangaId: GetChaptersByMangaId,
+     private val getBookmarkedChaptersByMangaId: GetBookmarkedChaptersByMangaId,
+     private val setReadStatus: SetReadStatus,
+@@ -206,6 +216,30 @@ class LibraryViewModel(
+     }
+         .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
+
++    // Independent of the grid so waiting for history never delays opening the Library.
++    val resumeTarget: StateFlow<ResumeTarget?> = preferences.downloadedOnly.changes()
++        .distinctUntilChanged()
++        .flatMapLatest { downloadedOnly ->
++            val downloadChanges = if (downloadedOnly) downloadCache.changes else flowOf(Unit)
++            combine(getHistory.subscribeForResume(), downloadChanges) { history, _ -> history }
++                .mapLatest { history ->
++                    history.firstNotNullOfOrNull { (mangaId, chapterId) ->
++                        val manga = getManga.await(mangaId) ?: return@firstNotNullOfOrNull null
++                        val chapter = getNextChapters.awaitFirstUnreadFrom(manga, chapterId) {
++                            it.canResume(manga, downloadedOnly)
++                        } ?: return@firstNotNullOfOrNull null
++                        ResumeTarget(manga.title, chapter)
++                    }
++                }
++        }
++        .distinctUntilChanged()
++        .catch {
++            logcat(LogPriority.ERROR, it)
++            emit(null)
++        }
++        .flowOn(Dispatchers.Default)
++        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), null)
++
+     private data class DisplayPreferences(
+         val showCategoryTabs: Boolean,
+         val showMangaCount: Boolean,
+@@ -493,6 +527,25 @@ class LibraryViewModel(
+         return withContext(Dispatchers.Default) { chapters.getNextUnread(manga, downloadManager) }
+     }
+
++    suspend fun getResumeChapter(target: ResumeTarget): Chapter? = withContext(Dispatchers.Default) {
++        // The displayed chapter may have been removed or marked read since the last update.
++        val chapter = getChapter.await(target.chapter.id)
++            ?.takeIf { !it.read && it.mangaId == target.chapter.mangaId }
++            ?: return@withContext null
++
++        if (preferences.downloadedOnly.get()) {
++            val manga = getManga.await(chapter.mangaId) ?: return@withContext null
++            chapter.takeIf { it.canResume(manga, downloadedOnly = true) }
++        } else {
++            chapter
++        }
++    }
++
++    private fun Chapter.canResume(manga: Manga, downloadedOnly: Boolean): Boolean {
++        return !downloadedOnly || manga.isLocal() ||
++            downloadCache.isChapterDownloaded(name, scanlator, url, manga.title, manga.source)
++    }
++
+     /**
+      * Queues the amount specified of unread chapters from the list of selected manga
+      */
+@@ -787,6 +840,8 @@ class LibraryViewModel(
+         val favoritesById by lazy { favorites.associateBy { it.id } }
+     }
+
++    data class ResumeTarget(val title: String, val chapter: Chapter)
++
+     @Immutable
+     data class State(
+         val isInitialized: Boolean = false,
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+index 95938e0..cb1c0c4 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
+@@ -11,6 +11,7 @@ import android.os.Bundle
+ import android.view.WindowManager
+ import android.widget.Toast
+ import androidx.activity.enableEdgeToEdge
++import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.activity.viewModels
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.focusable
+@@ -18,6 +19,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
+ import androidx.compose.foundation.gestures.awaitFirstDown
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.WindowInsets
+ import androidx.compose.foundation.layout.displayCutout
+@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
+ import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.CircularProgressIndicator
+ import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.LaunchedEffect
+@@ -60,6 +63,7 @@ import androidx.core.content.getSystemService
+ import androidx.core.net.toUri
+ import androidx.core.view.WindowInsetsCompat
+ import androidx.core.view.WindowInsetsControllerCompat
++import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.lifecycleScope
+ import androidx.lifecycle.viewmodel.initializer
+ import androidx.lifecycle.viewmodel.viewModelFactory
+@@ -76,16 +80,17 @@ import eu.kanade.presentation.reader.ReadingModeSelectDialog
+ import eu.kanade.presentation.reader.appbars.ReaderAppBars
+ import eu.kanade.presentation.reader.components.ChapterNavigatorType
+ import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
++import eu.kanade.presentation.util.formattedMessage
+ import eu.kanade.tachiyomi.R
+ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
+ import eu.kanade.tachiyomi.data.notification.Notifications
+-import eu.kanade.tachiyomi.source.model.Page
+ import eu.kanade.tachiyomi.source.online.HttpSource
+ import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
+ import eu.kanade.tachiyomi.ui.main.MainActivity
+ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
+ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
+ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
++import eu.kanade.tachiyomi.ui.reader.loader.HttpPageLoader
+ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+ import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+@@ -95,9 +100,10 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
+ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+ import eu.kanade.tachiyomi.ui.reader.viewer.LocalPageColorFilter
+ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+-import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+ import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.Action
+ import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
++import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewer
++import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+ import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+ import eu.kanade.tachiyomi.util.system.openInBrowser
+ import eu.kanade.tachiyomi.util.system.readerBackgroundColor
+@@ -105,6 +111,7 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
+ import eu.kanade.tachiyomi.util.system.toast
+ import eu.kanade.tachiyomi.util.view.setComposeContent
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.distinctUntilChanged
+ import kotlinx.coroutines.flow.drop
+@@ -113,6 +120,7 @@ import kotlinx.coroutines.flow.launchIn
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.onEach
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import logcat.LogPriority
+ import mihon.app.di.AppGraph
+ import mihon.core.metro.metroGraph
+@@ -128,6 +136,9 @@ class ReaderActivity : BaseActivity() {
+     private val graph: AppGraph by lazy { metroGraph() }
+
+     companion object {
++        private const val WEB_VIEW_CHAPTER = "reader_web_view_chapter"
++        private const val WEB_VIEW_PAGE = "reader_web_view_page"
++
+         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+             return Intent(context, ReaderActivity::class.java).apply {
+                 putExtra("manga", mangaId)
+@@ -146,7 +157,16 @@ class ReaderActivity : BaseActivity() {
+         viewModelFactory { initializer { ReaderSettingsViewModel(viewModel, readerPreferences, preferences) } }
+     }
+     private var assistUrl: String? = null
+-    private var retryFailedPagesAfterWebView = false
++    private var webViewLaunchJob: Job? = null
++    private var pendingWebViewRetry: WebViewRetry? = null
++    private val webViewLauncher =
++        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
++            val retry = pendingWebViewRetry
++            pendingWebViewRetry = null
++            if (result.resultCode == RESULT_OK && retry != null) retryAfterWebView(retry)
++        }
++
++    private data class WebViewRetry(val chapterId: Long, val pageIndex: Int?)
+
+     private var menuToggleToast: Toast? = null
+     private var readingModeToast: Toast? = null
+@@ -191,6 +211,13 @@ class ReaderActivity : BaseActivity() {
+
+         super.onCreate(savedInstanceState)
+
++        if (savedInstanceState?.containsKey(WEB_VIEW_CHAPTER) == true) {
++            pendingWebViewRetry = WebViewRetry(
++                chapterId = savedInstanceState.getLong(WEB_VIEW_CHAPTER),
++                pageIndex = savedInstanceState.getInt(WEB_VIEW_PAGE, -1).takeIf { it >= 0 },
++            )
++        }
++
+         setComposeContent {
+             val state by viewModel.state.collectAsState()
+             val general by settingsViewModel.general.collectAsState()
+@@ -237,7 +264,7 @@ class ReaderActivity : BaseActivity() {
+                 ReaderViewer()
+
+                 if (isLoadingViewer) {
+-                    LoadingScreen()
++                    if (state.failedInitialChapter == null) LoadingScreen()
+                     return@Box
+                 }
+
+@@ -266,6 +293,12 @@ class ReaderActivity : BaseActivity() {
+                 AppBars(state = state)
+             }
+
++            val failedChapter = state.failedInitialChapter
++            val initialError = state.initError
++            if (failedChapter != null && initialError != null) {
++                InitialChapterErrorDialog(failedChapter, initialError)
++            }
++
+             if (state.isLoadingAdjacentChapter) {
+                 AlertDialog(
+                     onDismissRequest = {},
+@@ -347,7 +380,7 @@ class ReaderActivity : BaseActivity() {
+             .launchIn(lifecycleScope)
+
+         viewModel.state
+-            .map { it.initError }
++            .map { state -> state.initError.takeIf { state.failedInitialChapter == null } }
+             .distinctUntilChanged()
+             .filterNotNull()
+             .onEach(::setInitialChapterError)
+@@ -396,6 +429,14 @@ class ReaderActivity : BaseActivity() {
+             .launchIn(lifecycleScope)
+     }
+
++    override fun onSaveInstanceState(outState: Bundle) {
++        super.onSaveInstanceState(outState)
++        pendingWebViewRetry?.let { retry ->
++            outState.putLong(WEB_VIEW_CHAPTER, retry.chapterId)
++            retry.pageIndex?.let { outState.putInt(WEB_VIEW_PAGE, it) }
++        }
++    }
++
+     /**
+      * Called when the activity is destroyed. Cleans up the viewer and any view.
+      */
+@@ -409,10 +450,33 @@ class ReaderActivity : BaseActivity() {
+     private fun retryNearbyFailedPages() {
+         val state = viewModel.state.value
+         val chapter = state.currentChapter ?: return
+-        val index = (state.currentPage - 1).coerceAtLeast(0)
+-        chapter.pages.orEmpty()
+-            .filter { it.index in (index - 1)..(index + 3) && it.status is Page.State.Error }
+-            .forEach { page -> chapter.pageLoader?.retryPage(page) }
++        retryNearbyFailedPages(chapter, state.currentPage - 1)
++    }
++
++    private fun retryNearbyFailedPages(chapter: ReaderChapter, pageIndex: Int) {
++        val loader = chapter.pageLoader as? HttpPageLoader ?: return
++        if (loader.isRecycled) return
++
++        val webGpuViewer = viewer as? WebGpuViewer
++        chapter.pages.orEmpty().failedPagesNear(pageIndex).forEach { page ->
++            if (webGpuViewer?.retryFailedPage(page) != true) loader.retryPage(page)
++        }
++    }
++
++    private fun retryAfterWebView(retry: WebViewRetry) {
++        val state = viewModel.state.value
++        val chapter = state.findWebViewChapter(retry.chapterId) ?: return
++        if (chapter.pageLoader !is HttpPageLoader) return
++
++        if (retry.pageIndex != null) {
++            retryNearbyFailedPages(chapter, retry.pageIndex)
++        } else if (chapter.state is ReaderChapter.State.Error) {
++            if (chapter === state.failedInitialChapter) {
++                viewModel.retryInitialChapter()
++            } else {
++                requestPreloadChapter(chapter, retryFailed = true)
++            }
++        }
+     }
+
+     override fun onPause() {
+@@ -435,16 +499,6 @@ class ReaderActivity : BaseActivity() {
+      */
+     override fun onResume() {
+         super.onResume()
+-        if (retryFailedPagesAfterWebView) {
+-            retryFailedPagesAfterWebView = false
+-            // Browser verification can refresh source cookies. Retry only failed nearby pages.
+-            val state = viewModel.state.value
+-            val chapter = state.currentChapter
+-            val index = (state.currentPage - 1).coerceAtLeast(0)
+-            chapter?.pages.orEmpty()
+-                .filter { it.index in (index - 1)..(index + 2) && it.status is Page.State.Error }
+-                .forEach { page -> chapter?.pageLoader?.retryPage(page) }
+-        }
+         viewModel.restartReadTimer()
+         setMenuVisibility(viewModel.state.value.menuVisible)
+     }
+@@ -692,15 +746,42 @@ class ReaderActivity : BaseActivity() {
+     }
+
+     private fun openChapterInWebView() {
++        val state = viewModel.state.value
++        val chapter = state.currentChapter ?: return
++        openReaderWebView(chapter, pageIndex = (state.currentPage - 1).coerceAtLeast(0))
++    }
++
++    internal fun verificationAction(chapter: ReaderChapter, page: ReaderPage? = null): (() -> Unit)? {
++        if (chapter.pageLoader !is HttpPageLoader || viewModel.getSource() == null) return null
++        return { openReaderWebView(chapter, page, page?.index) }
++    }
++
++    private fun openReaderWebView(chapter: ReaderChapter, page: ReaderPage? = null, pageIndex: Int? = null) {
+         val manga = viewModel.manga ?: return
+         val source = viewModel.getSource() ?: return
+-        assistUrl?.let {
+-            val intent = WebViewActivity.newIntent(this@ReaderActivity, it, source.id, manga.title)
+-            retryFailedPagesAfterWebView = true
+-            startActivity(intent)
++        if (pendingWebViewRetry != null || webViewLaunchJob?.isActive == true) return
++
++        val chapterId = chapter.chapter.id
++        webViewLaunchJob = lifecycleScope.launch {
++            val url = page?.verificationUrl()
++                ?: withContext(Dispatchers.IO) { viewModel.getChapterUrl(chapter)?.webViewHttpUrl() }
++
++            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@launch
++            if (viewModel.state.value.findWebViewChapter(chapterId) !== chapter) return@launch
++            if (url == null) {
++                toast(MR.strings.unknown_error)
++                return@launch
++            }
++
++            pendingWebViewRetry = WebViewRetry(chapterId, pageIndex)
++            webViewLauncher.launch(WebViewActivity.newIntent(this@ReaderActivity, url, source.id, manga.title))
+         }
+     }
+
++    private fun ReaderViewModel.State.findWebViewChapter(id: Long): ReaderChapter? =
++        listOfNotNull(currentChapter, viewerChapters?.prevChapter, viewerChapters?.nextChapter, failedInitialChapter)
++            .firstOrNull { it.chapter.id == id }
++
+     private fun openChapterInBrowser() {
+         assistUrl?.let {
+             openInBrowser(it.toUri(), forceDefaultBrowser = false)
+@@ -739,10 +820,32 @@ class ReaderActivity : BaseActivity() {
+         }
+     }
+
+-    /**
+-     * Called from the presenter if the initial load couldn't load the pages of the chapter. In
+-     * this case the activity is closed and a toast is shown to the user.
+-     */
++    @Composable
++    private fun InitialChapterErrorDialog(chapter: ReaderChapter, error: Throwable) {
++        val message = with(this) { error.formattedMessage }
++        AlertDialog(
++            onDismissRequest = ::finish,
++            title = { Text(chapter.chapter.name) },
++            text = {
++                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
++                    Text(stringResource(MR.strings.transition_pages_error, message))
++                    Text(stringResource(MR.strings.reader_verify_in_webview))
++                }
++            },
++            confirmButton = {
++                TextButton(onClick = { openReaderWebView(chapter) }) {
++                    Text(stringResource(MR.strings.action_open_in_web_view))
++                }
++            },
++            dismissButton = {
++                TextButton(onClick = viewModel::retryInitialChapter) {
++                    Text(stringResource(MR.strings.action_retry))
++                }
++            },
++        )
++    }
++
++    /** Errors outside an online chapter's page list still close the reader. */
+     private fun setInitialChapterError(error: Throwable) {
+         logcat(LogPriority.ERROR, error)
+         finish()
+@@ -802,8 +905,8 @@ class ReaderActivity : BaseActivity() {
+      * Called from the viewer when the given [chapter] should be preloaded. It should be called when
+      * the viewer is reaching the beginning or end of a chapter or the transition page is active.
+      */
+-    fun requestPreloadChapter(chapter: ReaderChapter) {
+-        lifecycleScope.launch(Dispatchers.IO) { viewModel.preload(chapter) }
++    fun requestPreloadChapter(chapter: ReaderChapter, retryFailed: Boolean = false) {
++        lifecycleScope.launch(Dispatchers.IO) { viewModel.preload(chapter, retryFailed) }
+     }
+
+     /**
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index a719fdc..fff25e3 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -319,6 +319,7 @@ class ReaderViewModel(
+     }
+
+     override fun onCleared() {
++        state.value.failedInitialChapter?.pageLoader?.recycle()
+         val currentChapters = state.value.viewerChapters
+         if (currentChapters != null) {
+             currentChapters.unref()
+@@ -344,6 +345,7 @@ class ReaderViewModel(
+      */
+     private suspend fun init() {
+         withContext(Dispatchers.IO) {
++            var initialChapter: ReaderChapter? = null
+             try {
+                 val manga = getManga.await(mangaId) ?: error("Requested manga of id $mangaId not found")
+                 val source = sourceManager.getOrStub(manga.source)
+@@ -363,12 +365,33 @@ class ReaderViewModel(
+                 )
+
+                 chapterList = loadChapterList()
+-                loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
++                initialChapter = chapterList.first { chapterId == it.chapter.id }
++                loadChapter(loader!!, initialChapter)
+             } catch (e: Throwable) {
+-                if (e is CancellationException) {
+-                    throw e
+-                }
+-                mutableState.update { it.copy(initError = e) }
++                reportInitialChapterError(e, initialChapter)
++            }
++        }
++    }
++
++    private fun reportInitialChapterError(error: Throwable, chapter: ReaderChapter?) {
++        if (error is CancellationException) throw error
++        val failedOnlineChapter = chapter?.takeIf {
++            it.state is ReaderChapter.State.Error && it.pageLoader is HttpPageLoader
++        }
++        mutableState.update { it.copy(initError = error, failedInitialChapter = failedOnlineChapter) }
++    }
++
++    fun retryInitialChapter() {
++        val chapter = state.value.failedInitialChapter ?: return
++        val loader = loader ?: return
++        mutableState.update { it.copy(initError = null, failedInitialChapter = null) }
++        viewModelScope.launch(Dispatchers.IO) {
++            chapter.pageLoader?.recycle()
++            chapter.pageLoader = null
++            try {
++                loadChapter(loader, chapter)
++            } catch (e: Throwable) {
++                reportInitialChapterError(e, chapter)
+             }
+         }
+     }
+@@ -487,7 +510,7 @@ class ReaderViewModel(
+      * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so
+      * that the user doesn't have to wait too long to continue reading.
+      */
+-    suspend fun preload(chapter: ReaderChapter) {
++    suspend fun preload(chapter: ReaderChapter, retryFailed: Boolean = false) {
+         if (chapter.state is ReaderChapter.State.Loaded || chapter.state == ReaderChapter.State.Loading) {
+             return
+         }
+@@ -513,6 +536,13 @@ class ReaderViewModel(
+         }
+
+         val loader = loader ?: return
++        if (chapter.state is ReaderChapter.State.Error && chapter.pageLoader is HttpPageLoader) {
++            // Keep an online chapter's error actionable until the user requests another attempt.
++            if (!retryFailed) return
++            chapter.pageLoader?.recycle()
++            chapter.pageLoader = null
++        }
++
+         try {
+             logcat { "Preloading ${chapter.chapter.url}" }
+             loader.loadChapter(chapter)
+@@ -775,8 +805,8 @@ class ReaderViewModel(
+
+     fun getSource() = state.value.source as? HttpSource
+
+-    fun getChapterUrl(): String? {
+-        val sChapter = getCurrentChapter()?.chapter?.toSChapter() ?: return null
++    fun getChapterUrl(chapter: ReaderChapter? = getCurrentChapter()): String? {
++        val sChapter = chapter?.chapter?.toSChapter() ?: return null
+         val source = getSource() ?: return null
+
+         return try {
+@@ -1090,6 +1120,7 @@ class ReaderViewModel(
+         val manga: Manga? = null,
+         val source: Source? = null,
+         val initError: Throwable? = null,
++        val failedInitialChapter: ReaderChapter? = null,
+         val viewerChapters: ViewerChapters? = null,
+         val bookmarked: Boolean = false,
+         val isLoadingAdjacentChapter: Boolean = false,
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecovery.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecovery.kt
+new file mode 100644
+index 0000000..c93fd67
+--- /dev/null
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecovery.kt
+@@ -0,0 +1,17 @@
++package eu.kanade.tachiyomi.ui.reader
++
++import eu.kanade.tachiyomi.source.model.Page
++import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
++import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
++
++internal fun String.webViewHttpUrl(): String? = takeIf { toHttpUrlOrNull() != null }
++
++internal fun ReaderPage.verificationUrl(): String? = imageUrl?.webViewHttpUrl() ?: url.webViewHttpUrl()
++
++internal fun List<ReaderPage>.failedPagesNear(pageIndex: Int): Sequence<ReaderPage> {
++    if (pageIndex !in indices) return emptySequence()
++    val nearby = (pageIndex - 1).coerceAtLeast(0)..(pageIndex + 3).coerceAtMost(lastIndex)
++    return nearby.asSequence()
++        .map { this[it] }
++        .filter { it.status is Page.State.Error }
++}
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
+index 06eefc8..f19b51a 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReaderPreferences.kt
+@@ -171,6 +171,9 @@ class ReaderPreferences(
+
+     // region Controls
+
++    val toolbarLayout: Preference<ToolbarLayout> =
++        preferenceStore.getEnum("reader_toolbar_layout", ToolbarLayout.STANDARD)
++
+     val readWithLongTap: Preference<Boolean> = preferenceStore.getBoolean("reader_long_tap", true)
+
+     val readWithVolumeKeys: Preference<Boolean> = preferenceStore.getBoolean("reader_volume_keys", false)
+@@ -271,6 +274,12 @@ class ReaderPreferences(
+         WHITE_BLACK,
+     }
+
++    enum class ToolbarLayout(val titleRes: StringResource) {
++        STANDARD(MR.strings.label_default),
++        LEFT_HANDED(MR.strings.reader_controls_left_hand),
++        RIGHT_HANDED(MR.strings.reader_controls_right_hand),
++    }
++
+     enum class TappingInvertMode(
+         val titleRes: StringResource,
+         val shouldInvertHorizontal: Boolean = false,
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageError.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageError.kt
+index c6586dc..0488f28 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageError.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderPageError.kt
+@@ -12,28 +12,23 @@ import androidx.compose.ui.platform.LocalContext
+ import eu.kanade.presentation.reader.ReaderError
+ import eu.kanade.presentation.util.formattedMessage
+ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+-import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+
+ /**
+- * [ReaderError] for a [page] that failed with [error]: Retry asks its loader again, and an image from the web can
+- * be opened in a WebView with the cookies of the source [sourceId].
++ * [ReaderError] for a [page] that failed with [error]: Retry asks its loader again.
+  */
+ @Composable
+ fun ReaderPageError(
+     page: ReaderPage,
+     error: Throwable?,
+-    sourceId: Long?,
++    onOpenInWebView: (() -> Unit)?,
+     modifier: Modifier = Modifier,
+     onButtonPressChange: ((pressed: Boolean) -> Unit)? = null,
+ ) {
+     val context = LocalContext.current
+-    val imageUrl = page.imageUrl?.takeIf { it.startsWith("http", ignoreCase = true) }
+     ReaderError(
+         message = with(context) { error?.formattedMessage },
+         onRetry = { page.chapter.pageLoader?.retryPage(page) },
+-        onOpenInWebView = imageUrl?.let {
+-            { context.startActivity(WebViewActivity.newIntent(context, it, sourceId)) }
+-        },
++        onOpenInWebView = onOpenInWebView,
+         modifier = modifier,
+         onButtonPressChange = onButtonPressChange,
+     )
+@@ -49,10 +44,10 @@ class ReaderPageErrorView(context: Context) : AbstractComposeView(context) {
+     fun bind(
+         page: ReaderPage,
+         error: Throwable?,
+-        sourceId: Long?,
++        onOpenInWebView: (() -> Unit)?,
+         onButtonPressChange: ((pressed: Boolean) -> Unit)? = null,
+     ) {
+-        data = Data(page, error, sourceId, onButtonPressChange)
++        data = Data(page, error, onOpenInWebView, onButtonPressChange)
+     }
+
+     @Composable
+@@ -62,7 +57,7 @@ class ReaderPageErrorView(context: Context) : AbstractComposeView(context) {
+             ReaderPageError(
+                 page = data.page,
+                 error = data.error,
+-                sourceId = data.sourceId,
++                onOpenInWebView = data.onOpenInWebView,
+                 modifier = Modifier.fillMaxSize(),
+                 onButtonPressChange = data.onButtonPressChange,
+             )
+@@ -72,7 +67,7 @@ class ReaderPageErrorView(context: Context) : AbstractComposeView(context) {
+     private data class Data(
+         val page: ReaderPage,
+         val error: Throwable?,
+-        val sourceId: Long?,
++        val onOpenInWebView: (() -> Unit)?,
+         val onButtonPressChange: ((pressed: Boolean) -> Unit)?,
+     )
+ }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionPage.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionPage.kt
+index c2cb123..6a3dbdb 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionPage.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionPage.kt
+@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.foundation.layout.padding
+-import androidx.compose.material3.Button
+ import androidx.compose.material3.CircularProgressIndicator
+ import androidx.compose.material3.LocalContentColor
+ import androidx.compose.material3.LocalTextStyle
+@@ -17,7 +16,8 @@ import androidx.compose.runtime.getValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import eu.kanade.presentation.reader.ChapterTransition
+-import eu.kanade.presentation.reader.reportPress
++import eu.kanade.presentation.reader.ReaderError
++import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+ import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+ import tachiyomi.i18n.MR
+@@ -27,7 +27,7 @@ import tachiyomi.presentation.core.i18n.stringResource
+ fun ReaderTransitionPage(
+     transition: ChapterTransition,
+     downloadState: TransitionDownloadState?,
+-    onRetry: (ReaderChapter) -> Unit,
++    activity: ReaderActivity,
+     onButtonPressChange: (pressed: Boolean) -> Unit,
+     modifier: Modifier = Modifier,
+     statusPadding: PaddingValues = PaddingValues(),
+@@ -51,36 +51,42 @@ fun ReaderTransitionPage(
+         }
+
+         val toChapter = transition.to ?: return@Column
+-        val state by toChapter.stateFlow.collectAsState()
+-        when (val state = state) {
+-            is ReaderChapter.State.Loading -> Column(
+-                modifier = Modifier.padding(statusPadding),
+-                horizontalAlignment = Alignment.CenterHorizontally,
+-            ) {
+-                CircularProgressIndicator()
+-                Text(
+-                    text = stringResource(MR.strings.transition_pages_loading),
+-                    color = MaterialTheme.colorScheme.onBackground,
+-                    style = MaterialTheme.typography.bodyMedium,
+-                )
+-            }
+-            is ReaderChapter.State.Error -> Column(
+-                modifier = Modifier.padding(statusPadding),
+-                horizontalAlignment = Alignment.CenterHorizontally,
+-            ) {
+-                Text(
+-                    text = stringResource(MR.strings.transition_pages_error, state.error.message ?: ""),
+-                    color = MaterialTheme.colorScheme.onBackground,
+-                    style = MaterialTheme.typography.bodyMedium,
+-                )
+-                Button(
+-                    onClick = { onRetry(toChapter) },
+-                    modifier = Modifier.reportPress(onButtonPressChange),
+-                ) {
+-                    Text(stringResource(MR.strings.action_retry))
+-                }
+-            }
+-            is ReaderChapter.State.Wait, is ReaderChapter.State.Loaded -> {}
++        ReaderChapterTransitionStatus(
++            chapter = toChapter,
++            activity = activity,
++            modifier = Modifier.padding(statusPadding),
++            onButtonPressChange = onButtonPressChange,
++        )
++    }
++}
++
++@Composable
++internal fun ReaderChapterTransitionStatus(
++    chapter: ReaderChapter,
++    activity: ReaderActivity,
++    modifier: Modifier = Modifier,
++    onButtonPressChange: ((pressed: Boolean) -> Unit)? = null,
++) {
++    val state by chapter.stateFlow.collectAsState()
++    when (val state = state) {
++        ReaderChapter.State.Loading -> Column(
++            modifier = modifier,
++            horizontalAlignment = Alignment.CenterHorizontally,
++        ) {
++            CircularProgressIndicator()
++            Text(
++                text = stringResource(MR.strings.transition_pages_loading),
++                color = MaterialTheme.colorScheme.onBackground,
++                style = MaterialTheme.typography.bodyMedium,
++            )
+         }
++        is ReaderChapter.State.Error -> ReaderError(
++            message = stringResource(MR.strings.transition_pages_error, state.error.message.orEmpty()),
++            onRetry = { activity.requestPreloadChapter(chapter, retryFailed = true) },
++            onOpenInWebView = activity.verificationAction(chapter),
++            modifier = modifier,
++            onButtonPressChange = onButtonPressChange,
++        )
++        ReaderChapter.State.Wait, is ReaderChapter.State.Loaded -> {}
+     }
+ }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionView.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionView.kt
+index a340dec..79a19f4 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionView.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/ReaderTransitionView.kt
+@@ -9,8 +9,8 @@ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.platform.AbstractComposeView
++import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+ import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+-import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+
+ /**
+  * [ReaderTransitionPage] for the view-based viewers, in the theme of its reader-themed [context].
+@@ -27,11 +27,11 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
+     fun bind(
+         transition: ChapterTransition,
+         downloadState: TransitionDownloadState?,
+-        onRetry: (ReaderChapter) -> Unit,
++        activity: ReaderActivity,
+         onButtonPressChange: (pressed: Boolean) -> Unit = {},
+         statusPadding: PaddingValues = PaddingValues(),
+     ) {
+-        data = Data(transition, downloadState, onRetry, onButtonPressChange, statusPadding)
++        data = Data(transition, downloadState, activity, onButtonPressChange, statusPadding)
+     }
+
+     @Composable
+@@ -42,7 +42,7 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
+             ReaderTransitionPage(
+                 transition = data.transition,
+                 downloadState = data.downloadState,
+-                onRetry = data.onRetry,
++                activity = data.activity,
+                 onButtonPressChange = data.onButtonPressChange,
+                 statusPadding = data.statusPadding,
+             )
+@@ -52,7 +52,7 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
+     private data class Data(
+         val transition: ChapterTransition,
+         val downloadState: TransitionDownloadState?,
+-        val onRetry: (ReaderChapter) -> Unit,
++        val activity: ReaderActivity,
+         val onButtonPressChange: (pressed: Boolean) -> Unit,
+         val statusPadding: PaddingValues,
+     )
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+index 926e930..0541aff 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerPageHolder.kt
+@@ -219,7 +219,7 @@ class PagerPageHolder(
+         errorLayout.bind(
+             page = page,
+             error = error,
+-            sourceId = viewer.activity.viewModel.manga?.source,
++            onOpenInWebView = viewer.activity.verificationAction(page.chapter, page),
+             onButtonPressChange = { pressed -> viewer.pager.setGestureDetectorEnabled(!pressed) },
+         )
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerTransitionHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerTransitionHolder.kt
+index 849daaf..4e9d979 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerTransitionHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/PagerTransitionHolder.kt
+@@ -42,7 +42,7 @@ class PagerTransitionHolder(
+                 viewer.activity.viewModel.manga,
+                 viewer.activity.viewModel.source,
+             ),
+-            onRetry = viewer.activity::requestPreloadChapter,
++            activity = viewer.activity,
+             onButtonPressChange = { pressed -> viewer.pager.setGestureDetectorEnabled(!pressed) },
+         )
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/ReaderChromePages.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/ReaderChromePages.kt
+index 3dc1f23..b461471 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/ReaderChromePages.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/ReaderChromePages.kt
+@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer.webgpu
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.BoxScope
+ import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.fillMaxHeight
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.fillMaxWidth
+@@ -29,8 +30,8 @@ import eu.kanade.presentation.reader.ReaderError
+ import eu.kanade.presentation.util.formattedMessage
+ import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
++import eu.kanade.tachiyomi.ui.reader.viewer.ReaderChapterTransitionStatus
+ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderThemedContent
+-import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
+ import tachiyomi.presentation.core.components.CombinedCircularProgressIndicator
+@@ -89,8 +90,6 @@ class ErrorPage internal constructor(
+     @Composable
+     override fun PageContent() {
+         val context = LocalContext.current
+-        // As the pager's own error layout: only offered for an image that came off the web.
+-        val imageUrl = viewerPage?.page?.imageUrl?.takeIf { it.startsWith("http", ignoreCase = true) }
+         val strip = if (viewer is WebGpuViewerContinuous) {
+             Modifier.fillMaxHeight(STRIP_ERROR_HEIGHT_FRACTION).wrapContentHeight()
+         } else {
+@@ -101,12 +100,7 @@ class ErrorPage internal constructor(
+             modifier = strip,
+             message = with(context) { error?.formattedMessage },
+             onRetry = { viewerPage?.let { viewer.retryLoad(it) } },
+-            onOpenInWebView = imageUrl?.let {
+-                {
+-                    val sourceId = viewer.activity.viewModel.manga?.source
+-                    context.startActivity(WebViewActivity.newIntent(context, it, sourceId))
+-                }
+-            },
++            onOpenInWebView = viewerPage?.page?.let { viewer.activity.verificationAction(it.chapter, it) },
+         )
+     }
+ }
+@@ -184,12 +178,13 @@ class TransitionPage(
+             } else {
+                 Modifier.padding(horizontal = TRANSITION_SIDE_PADDING.dp)
+             }
+-            Box(modifier = padding.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
++            Column(modifier = padding.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                 ChapterTransition(
+                     transition = transition,
+                     currChapterDownloaded = transition.from.pageLoader?.isLocal == true,
+                     goingToChapterDownloaded = goingToChapterDownloaded,
+                 )
++                transition.to?.let { ReaderChapterTransitionStatus(it, viewer.activity) }
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/WebGpuViewer.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/WebGpuViewer.kt
+index 19cd8e5..c8f9c3c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/WebGpuViewer.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webgpu/WebGpuViewer.kt
+@@ -505,6 +505,7 @@ open class WebGpuViewer(
+      * decode. Gives up after 5 seconds if the chapter never finishes loading.
+      */
+     private fun preloadChapterThenRetry(chapter: ReaderChapter) {
++        if (chapter.state is ReaderChapter.State.Error && chapter.pageLoader?.isLocal == false) return
+         // fetchPage reaches prev/next per frame - unguarded, each frame starts another 5s poll.
+         val chapterId = chapter.chapter.id
+         synchronized(lock) {
+@@ -1077,23 +1078,36 @@ open class WebGpuViewer(
+     }
+
+     /** [ErrorPage]'s Retry: back to the ring, then loaded and decoded afresh. */
+-    internal fun retryLoad(page: ViewerReaderPage) {
++    internal fun retryFailedPage(page: ReaderPage): Boolean {
++        val cached = synchronized(lock) {
++            findInCache(PageKey.Reader(page.chapter.chapter.id, page.index)) as? ViewerReaderPage
++        } ?: return false
++        return cached.page === page && retryLoad(cached, watchOnly = true)
++    }
++
++    internal fun retryLoad(page: ViewerReaderPage, watchOnly: Boolean = false): Boolean {
+         synchronized(lock) {
+-            if (!pageInCache(page) || page.imagePage !is ErrorPage) return
++            if (!pageInCache(page) || page.imagePage !is ErrorPage) return false
+             val old = page.imagePage
+             page.imagePage = ProgressPage(this)
+             cleanupImage(old)
+             if (page.state != PageState.LOADING) page.state = PageState.IDLE
+         }
+         page.page.chapter.pageLoader?.retryPage(page.page)
+-        synchronized(lock) {
+-            if (pageInCache(page)) queueForDecode(page, prioritize = true)
++        if (watchOnly) {
++            // The retry is already queued. Observe it without asking the loader to prefetch again.
++            startPageLoad(page, requestIfQueued = false)
++        } else {
++            synchronized(lock) {
++                if (pageInCache(page)) queueForDecode(page, prioritize = true)
++            }
+         }
+         viewerState.invalidate()
++        return true
+     }
+
+     /** Downloads [page] if needed, then re-queues it for decode once ready. */
+-    private fun startPageLoad(page: ViewerReaderPage) {
++    private fun startPageLoad(page: ViewerReaderPage, requestIfQueued: Boolean = true) {
+         val loader = page.page.chapter.pageLoader ?: run {
+             synchronized(lock) { if (pageInCache(page)) page.state = PageState.IDLE }
+             return
+@@ -1116,7 +1130,7 @@ open class WebGpuViewer(
+             page.state = PageState.LOADING
+         }
+
+-        if (page.page.status == Page.State.Queue) {
++        if (requestIfQueued && page.page.status == Page.State.Queue) {
+             requestDownload(page)
+         }
+
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
+index 39cd89f..0c50b75 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonPageHolder.kt
+@@ -251,7 +251,11 @@ class WebtoonPageHolder(
+             frame.addView(it, FrameLayout.LayoutParams(MATCH_PARENT, (parentHeight * 0.8).toInt()))
+             errorLayout = it
+         }
+-        errorLayout.bind(page = page, error = error, sourceId = viewer.activity.viewModel.manga?.source)
++        errorLayout.bind(
++            page = page,
++            error = error,
++            onOpenInWebView = viewer.activity.verificationAction(page.chapter, page),
++        )
+     }
+
+     /**
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonTransitionHolder.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonTransitionHolder.kt
+index e27e276..a0315e7 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonTransitionHolder.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/webtoon/WebtoonTransitionHolder.kt
+@@ -44,7 +44,7 @@ class WebtoonTransitionHolder(
+                 viewer.activity.viewModel.manga,
+                 viewer.activity.viewModel.source,
+             ),
+-            onRetry = viewer.activity::requestPreloadChapter,
++            activity = viewer.activity,
+             statusPadding = PaddingValues(vertical = 16.dp),
+         )
+     }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/webview/WebViewActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/webview/WebViewActivity.kt
+index a9a275c..3e86b0c 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/webview/WebViewActivity.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/webview/WebViewActivity.kt
+@@ -95,6 +95,11 @@ class WebViewActivity : BaseActivity() {
+                 onShare = this::shareWebpage,
+                 onOpenInBrowser = this::openInBrowser,
+                 onClearCookies = this::clearCookies,
++                onWebPageFinished = { setResult(RESULT_OK) },
++                onWebViewCrashed = {
++                    setResult(RESULT_CANCELED)
++                    finish()
++                },
+             )
+         }
+     }
+@@ -142,7 +147,6 @@ class WebViewActivity : BaseActivity() {
+
+         fun newIntent(context: Context, url: String, sourceId: Long? = null, title: String? = null): Intent {
+             return Intent(context, WebViewActivity::class.java).apply {
+-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                 putExtra(URL_KEY, url)
+                 putExtra(SOURCE_KEY, sourceId)
+                 putExtra(TITLE_KEY, title)
+diff --git a/app/src/test/java/eu/kanade/presentation/browse/BrowseSourceLoadFailureTest.kt b/app/src/test/java/eu/kanade/presentation/browse/BrowseSourceLoadFailureTest.kt
+new file mode 100644
+index 0000000..16a3e1a
+--- /dev/null
++++ b/app/src/test/java/eu/kanade/presentation/browse/BrowseSourceLoadFailureTest.kt
+@@ -0,0 +1,63 @@
++package eu.kanade.presentation.browse
++
++import eu.kanade.tachiyomi.network.HttpException
++import org.junit.jupiter.api.Assertions.assertFalse
++import org.junit.jupiter.api.Assertions.assertNull
++import org.junit.jupiter.api.Assertions.assertSame
++import org.junit.jupiter.api.Assertions.assertTrue
++import org.junit.jupiter.api.Test
++import tachiyomi.data.source.NoResultsException
++import tachiyomi.domain.source.model.SourceNotInstalledException
++import java.net.ConnectException
++import java.net.SocketTimeoutException
++import java.net.UnknownHostException
++
++class BrowseSourceLoadFailureTest {
++
++    @Test
++    fun `valid empty pages are not load failures`() {
++        assertNull(browseSourceLoadFailure(NoResultsException(), null, isHttpSource = true))
++        assertNull(browseSourceLoadFailure(null, NoResultsException(), isHttpSource = true))
++    }
++
++    @Test
++    fun `failed refresh takes precedence over failed append and keeps the original details`() {
++        val refreshError = IllegalStateException("Extension parse error")
++        val failure = requireNotNull(browseSourceLoadFailure(refreshError, HttpException(403), isHttpSource = true))
++
++        assertSame(refreshError, failure.error)
++        assertFalse(failure.isAppend)
++    }
++
++    @Test
++    fun `HTTP errors while loading more results can be checked in WebView`() {
++        val error = HttpException(403)
++        val failure = requireNotNull(browseSourceLoadFailure(null, error, isHttpSource = true))
++
++        assertSame(error, failure.error)
++        assertTrue(failure.isAppend)
++        assertTrue(failure.canOpenWebView)
++    }
++
++    @Test
++    fun `connection and missing source errors do not suggest WebView`() {
++        val errors = listOf(
++            UnknownHostException(),
++            ConnectException(),
++            SocketTimeoutException(),
++            SourceNotInstalledException(),
++        )
++        for (error in errors) {
++            val failure = requireNotNull(browseSourceLoadFailure(error, null, isHttpSource = true))
++            assertFalse(failure.canOpenWebView, error.javaClass.simpleName)
++        }
++    }
++
++    @Test
++    fun `sources without a website do not suggest WebView`() {
++        val error = IllegalStateException("Local source error")
++        val failure = requireNotNull(browseSourceLoadFailure(error, null, isHttpSource = false))
++
++        assertFalse(failure.canOpenWebView)
++    }
++}
+diff --git a/app/src/test/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecoveryTest.kt b/app/src/test/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecoveryTest.kt
+new file mode 100644
+index 0000000..f0578bb
+--- /dev/null
++++ b/app/src/test/java/eu/kanade/tachiyomi/ui/reader/ReaderWebViewRecoveryTest.kt
+@@ -0,0 +1,58 @@
++package eu.kanade.tachiyomi.ui.reader
++
++import eu.kanade.tachiyomi.source.model.Page
++import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Assertions.assertNull
++import org.junit.jupiter.api.Test
++
++class ReaderWebViewRecoveryTest {
++
++    @Test
++    fun `returning retries only failed pages near the tapped page`() {
++        val failed = Page.State.Error(IllegalStateException())
++        val pages = listOf(
++            failed,
++            Page.State.Ready,
++            failed,
++            failed,
++            Page.State.DownloadImage,
++            failed,
++            failed,
++            failed,
++        ).mapIndexed { index, state -> ReaderPage(index).apply { status = state } }
++
++        assertEquals(listOf(2, 3, 5, 6), pages.failedPagesNear(3).map(ReaderPage::index).toList())
++    }
++
++    @Test
++    fun `a missing tapped page does not retry unrelated failures`() {
++        val page = ReaderPage(0).apply { status = Page.State.Error(IllegalStateException()) }
++
++        assertEquals(emptyList<ReaderPage>(), listOf(page).failedPagesNear(-1).toList())
++        assertEquals(emptyList<ReaderPage>(), listOf(page).failedPagesNear(1).toList())
++    }
++
++    @Test
++    fun `an image lookup failure can open the original page address`() {
++        val url = "https://example.com/chapter/1/page/3"
++        val page = ReaderPage(2, url)
++
++        assertEquals(url, page.verificationUrl())
++    }
++
++    @Test
++    fun `a failed image uses its original address without changing signed characters`() {
++        val url = "https://cdn.example.com/IMG.webp?key=a%2bb%2F&v=1"
++        val page = ReaderPage(2, "https://example.com/chapter/1", url)
++
++        assertEquals(url, page.verificationUrl())
++    }
++
++    @Test
++    fun `a page without a web address leaves recovery to the chapter address`() {
++        val page = ReaderPage(0, "/chapter/1", "httpx://example.com/image.webp")
++
++        assertNull(page.verificationUrl())
++    }
++}
+diff --git a/data/src/main/java/tachiyomi/data/history/HistoryRepositoryImpl.kt b/data/src/main/java/tachiyomi/data/history/HistoryRepositoryImpl.kt
+index d036ae1..f913a3a 100644
+--- a/data/src/main/java/tachiyomi/data/history/HistoryRepositoryImpl.kt
++++ b/data/src/main/java/tachiyomi/data/history/HistoryRepositoryImpl.kt
+@@ -15,6 +15,7 @@ import tachiyomi.data.subscribeToList
+ import tachiyomi.domain.history.model.History
+ import tachiyomi.domain.history.model.HistoryUpdate
+ import tachiyomi.domain.history.model.HistoryWithRelations
++import tachiyomi.domain.history.model.ResumeHistoryEntry
+ import tachiyomi.domain.history.repository.HistoryRepository
+
+ @Inject
+@@ -36,6 +37,12 @@ class HistoryRepositoryImpl(
+             .awaitAsOneOrNull()
+     }
+
++    override fun getRecentResumeHistory(): Flow<List<ResumeHistoryEntry>> {
++        return database.historyQueries
++            .getRecentResumeHistory(::ResumeHistoryEntry)
++            .subscribeToList()
++    }
++
+     override suspend fun getTotalReadDuration(): Long {
+         return database.historyQueries
+             .getReadDuration()
+diff --git a/data/src/main/sqldelight/tachiyomi/data/history.sq b/data/src/main/sqldelight/tachiyomi/data/history.sq
+index 36ba894..0041f23 100644
+--- a/data/src/main/sqldelight/tachiyomi/data/history.sq
++++ b/data/src/main/sqldelight/tachiyomi/data/history.sq
+@@ -26,6 +26,37 @@ FROM history
+ WHERE manga_id IN :mangaIds
+ ORDER BY manga_id, id;
+
++getRecentResumeHistory:
++SELECT H.manga_id, H.chapter_id
++FROM (
++    SELECT H.manga_id, max(H.read_at) AS read_at
++    FROM history H
++    JOIN chapter C ON C.id = H.chapter_id AND C.manga_id = H.manga_id
++    LEFT JOIN excluded_scanlator ES ON ES.manga_id = H.manga_id AND ES.scanlator = C.remote_scanlator
++    WHERE H.read_at IS NOT NULL AND ES.scanlator IS NULL
++    GROUP BY H.manga_id
++    HAVING EXISTS (SELECT 1 FROM manga M WHERE M.id = H.manga_id)
++    AND EXISTS (
++        SELECT 1
++        FROM chapter C
++        LEFT JOIN excluded_scanlator ES ON ES.manga_id = C.manga_id AND ES.scanlator = C.remote_scanlator
++        WHERE C.manga_id = H.manga_id AND C.user_read = 0 AND ES.scanlator IS NULL
++    )
++    ORDER BY read_at DESC, H.manga_id DESC
++    LIMIT 5
++) AS latest
++-- Resolve equal read timestamps only for the selected titles.
++JOIN history H ON H.id = (
++    SELECT candidate.id
++    FROM history candidate
++    JOIN chapter C ON C.id = candidate.chapter_id AND C.manga_id = candidate.manga_id
++    LEFT JOIN excluded_scanlator ES ON ES.manga_id = candidate.manga_id AND ES.scanlator = C.remote_scanlator
++    WHERE candidate.manga_id = latest.manga_id AND candidate.read_at = latest.read_at AND ES.scanlator IS NULL
++    ORDER BY candidate.id DESC
++    LIMIT 1
++)
++ORDER BY latest.read_at DESC, latest.manga_id DESC;
++
+ resetHistoryById:
+ UPDATE history
+ SET read_at = NULL
+diff --git a/domain/src/main/java/tachiyomi/domain/history/interactor/GetHistory.kt b/domain/src/main/java/tachiyomi/domain/history/interactor/GetHistory.kt
+index daa01f2..0adc81f 100644
+--- a/domain/src/main/java/tachiyomi/domain/history/interactor/GetHistory.kt
++++ b/domain/src/main/java/tachiyomi/domain/history/interactor/GetHistory.kt
+@@ -4,6 +4,7 @@ import dev.zacsweers.metro.Inject
+ import kotlinx.coroutines.flow.Flow
+ import tachiyomi.domain.history.model.History
+ import tachiyomi.domain.history.model.HistoryWithRelations
++import tachiyomi.domain.history.model.ResumeHistoryEntry
+ import tachiyomi.domain.history.repository.HistoryRepository
+
+ @Inject
+@@ -18,4 +19,8 @@ class GetHistory(
+     fun subscribe(query: String): Flow<List<HistoryWithRelations>> {
+         return repository.getHistory(query)
+     }
++
++    fun subscribeForResume(): Flow<List<ResumeHistoryEntry>> {
++        return repository.getRecentResumeHistory()
++    }
+ }
+diff --git a/domain/src/main/java/tachiyomi/domain/history/interactor/GetNextChapters.kt b/domain/src/main/java/tachiyomi/domain/history/interactor/GetNextChapters.kt
+index 5d7bc22..08b95ac 100644
+--- a/domain/src/main/java/tachiyomi/domain/history/interactor/GetNextChapters.kt
++++ b/domain/src/main/java/tachiyomi/domain/history/interactor/GetNextChapters.kt
+@@ -6,6 +6,7 @@ import tachiyomi.domain.chapter.model.Chapter
+ import tachiyomi.domain.chapter.service.getChapterSort
+ import tachiyomi.domain.history.repository.HistoryRepository
+ import tachiyomi.domain.manga.interactor.GetManga
++import tachiyomi.domain.manga.model.Manga
+ import kotlin.math.max
+
+ @Inject
+@@ -22,8 +23,7 @@ class GetNextChapters(
+
+     suspend fun await(mangaId: Long, onlyUnread: Boolean = true): List<Chapter> {
+         val manga = getManga.await(mangaId) ?: return emptyList()
+-        val chapters = getChaptersByMangaId.await(mangaId, applyScanlatorFilter = true)
+-            .sortedWith(getChapterSort(manga, sortDescending = false))
++        val chapters = getSortedChapters(manga)
+
+         return if (onlyUnread) {
+             chapters.filterNot { it.read }
+@@ -32,6 +32,23 @@ class GetNextChapters(
+         }
+     }
+
++    suspend fun awaitFirstUnreadFrom(
++        manga: Manga,
++        fromChapterId: Long,
++        canOpen: (Chapter) -> Boolean,
++    ): Chapter? {
++        val chapters = getSortedChapters(manga)
++        val fromIndex = chapters.indexOfFirst { it.id == fromChapterId }
++        if (fromIndex < 0) return null
++
++        return chapters.subList(fromIndex, chapters.size).firstOrNull { !it.read && canOpen(it) }
++    }
++
++    private suspend fun getSortedChapters(manga: Manga): List<Chapter> {
++        return getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
++            .sortedWith(getChapterSort(manga, sortDescending = false))
++    }
++
+     suspend fun await(
+         mangaId: Long,
+         fromChapterId: Long,
+diff --git a/domain/src/main/java/tachiyomi/domain/history/model/ResumeHistoryEntry.kt b/domain/src/main/java/tachiyomi/domain/history/model/ResumeHistoryEntry.kt
+new file mode 100644
+index 0000000..d6e36fa
+--- /dev/null
++++ b/domain/src/main/java/tachiyomi/domain/history/model/ResumeHistoryEntry.kt
+@@ -0,0 +1,3 @@
++package tachiyomi.domain.history.model
++
++data class ResumeHistoryEntry(val mangaId: Long, val chapterId: Long)
+diff --git a/domain/src/main/java/tachiyomi/domain/history/repository/HistoryRepository.kt b/domain/src/main/java/tachiyomi/domain/history/repository/HistoryRepository.kt
+index 1310ff5..023d967 100644
+--- a/domain/src/main/java/tachiyomi/domain/history/repository/HistoryRepository.kt
++++ b/domain/src/main/java/tachiyomi/domain/history/repository/HistoryRepository.kt
+@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
+ import tachiyomi.domain.history.model.History
+ import tachiyomi.domain.history.model.HistoryUpdate
+ import tachiyomi.domain.history.model.HistoryWithRelations
++import tachiyomi.domain.history.model.ResumeHistoryEntry
+
+ interface HistoryRepository {
+
+@@ -11,6 +12,8 @@ interface HistoryRepository {
+
+     suspend fun getLastHistory(): HistoryWithRelations?
+
++    fun getRecentResumeHistory(): Flow<List<ResumeHistoryEntry>>
++
+     suspend fun getTotalReadDuration(): Long
+
+     suspend fun getHistoryByMangaId(mangaId: Long): List<History>
+diff --git a/i18n/src/commonMain/moko-resources/base/strings.xml b/i18n/src/commonMain/moko-resources/base/strings.xml
+index 187b916..e03afdd 100644
+--- a/i18n/src/commonMain/moko-resources/base/strings.xml
++++ b/i18n/src/commonMain/moko-resources/base/strings.xml
+@@ -421,6 +421,9 @@
+     <string name="pref_flash_style_white_black">White and Black</string>
+     <string name="pref_double_tap_anim_speed">Double tap animation speed</string>
+     <string name="pref_show_page_number">Show page number</string>
++    <string name="reader_controls_layout">Reader controls</string>
++    <string name="reader_controls_left_hand">Left hand</string>
++    <string name="reader_controls_right_hand">Right hand</string>
+     <string name="pref_vertical_navigator">Use vertical chapter navigator in</string>
+     <string name="pref_vertical_navigator_height">Vertical navigator height</string>
+     <string name="pref_webtoon_vertical_navigator_on_left">Place vertical navigator on the left side</string>
+@@ -740,6 +743,9 @@
+     <!-- Browse source -->
+     <!-- missing prompt after Compose rewrite #7901 -->
+     <string name="no_results_found">No results found</string>
++    <string name="browse_source_load_failed">Couldn’t load results</string>
++    <string name="browse_source_load_more_failed">Couldn’t load more results</string>
++    <string name="browse_source_webview_recovery">If the site asks you to verify or sign in, do that in WebView, then come back and tap Retry.</string>
+     <string name="local_source">Local source</string>
+     <string name="other_source">Other</string>
+     <string name="last_used_source">Last used</string>
+@@ -999,6 +1005,7 @@
+     <string name="information_empty_category_dialog">You don\'t have any categories yet.</string>
+     <string name="information_cloudflare_bypass_failure">Failed to bypass Cloudflare</string>
+     <string name="information_cloudflare_help">Tap here for help with Cloudflare</string>
++    <string name="reader_verify_in_webview">If the site asks you to verify, complete it in WebView, then return to the reader.</string>
+     <string name="information_required_plain">*required</string>
+     <!-- Do not translate "WebView" -->
+     <string name="information_webview_required">WebView is required for the app to function</string>
