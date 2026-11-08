@@ -144,8 +144,8 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
     s = replace_once(s, "import eu.kanade.tachiyomi.source.online.HttpSource",
         "import eu.kanade.tachiyomi.source.model.Page\nimport eu.kanade.tachiyomi.source.online.HttpSource",
         "Reader Page import")
-    s = replace_once(s, "import eu.kanade.tachiyomi.ui.reader.viewer.Viewer",
-        "import eu.kanade.tachiyomi.ui.reader.viewer.Viewer\nimport eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer",
+    s = replace_once(s, "import eu.kanade.tachiyomi.ui.reader.viewer.Viewer\n",
+        "import eu.kanade.tachiyomi.ui.reader.viewer.Viewer\nimport eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer\n",
         "Reader Webtoon import")
     s = replace_once(s, "    private var assistUrl: String? = null",
         "    private var assistUrl: String? = null\n    private var retryFailedPagesAfterWebView = false",
