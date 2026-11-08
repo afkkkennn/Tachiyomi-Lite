@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Fail-closed Mihon source overlay for the experimental Tachiyomi Lite reader."""
-from pathlib import Path
+"""Fail-closed Mihon source overlay for the experimental Kisap reader."""
 import argparse
+from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
 
 READER = Path("app/src/main/java/eu/kanade/tachiyomi/ui/reader")
 DIALOG = Path("app/src/main/java/eu/kanade/presentation/reader/settings/ReaderSettingsDialog.kt")
+MANIFEST = Path("app/src/main/AndroidManifest.xml")
+APP_RES = Path("app/src/main/res")
+LAUNCHER_ICON = APP_RES / "mipmap/ic_launcher.xml"
+THEMES = APP_RES / "values/themes.xml"
+PHASE3_PATCH = Path(__file__).resolve().with_name("phase3.patch")
+BRAND_RESOURCES = (
+    Path("drawable/kisap_foreground.xml"),
+    Path("drawable/kisap_monochrome.xml"),
+    Path("values/kisap_brand.xml"),
+)
 
 POLICY = """package eu.kanade.tachiyomi.ui.reader
 
-import android.app.ActivityManager
 import android.content.Context
 
-/** A small on-device reader policy. AUTO targets devices with less than 5 GiB physical RAM. */
+/** Reduced prefetch is an explicit opt-in. */
 internal object ReaderLitePolicy {
     const val AUTO = 0
     const val ON = 1
@@ -19,7 +30,6 @@ internal object ReaderLitePolicy {
 
     private const val STORE = "reader_lite_settings"
     private const val MODE_KEY = "mode"
-    private const val AUTO_LIMIT_BYTES = 5L * 1024 * 1024 * 1024
 
     fun mode(context: Context): Int = context.applicationContext
         .getSharedPreferences(STORE, Context.MODE_PRIVATE)
@@ -31,20 +41,7 @@ internal object ReaderLitePolicy {
             .edit().putInt(MODE_KEY, value).apply()
     }
 
-    fun enabled(context: Context): Boolean = when (mode(context)) {
-        ON -> true
-        OFF -> false
-        else -> automaticallyEnabled(context)
-    }
-
-    private fun automaticallyEnabled(context: Context): Boolean {
-        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            ?: return false
-        if (manager.isLowRamDevice) return true
-        val info = ActivityManager.MemoryInfo()
-        manager.getMemoryInfo(info)
-        return info.totalMem in 1L until AUTO_LIMIT_BYTES
-    }
+    fun enabled(context: Context): Boolean = mode(context) == ON
 }
 """
 
@@ -57,9 +54,9 @@ private fun LiteSettingsPage(onRetryFailedPages: () -> Unit) {
     var mode by remember { mutableIntStateOf(ReaderLitePolicy.mode(context)) }
     Column(modifier = Modifier.padding(16.dp)) {
         Text("Lite reader mode", style = MaterialTheme.typography.titleMedium)
-        Text("Limits prefetch and recycled views to reduce memory use on 4 GB phones.")
+        Text("Balanced uses normal preloading. Always on reduces preloading to save memory.")
         listOf(
-            ReaderLitePolicy.AUTO to "Automatic (recommended)",
+            ReaderLitePolicy.AUTO to "Balanced (recommended)",
             ReaderLitePolicy.ON to "Always on",
             ReaderLitePolicy.OFF to "Off",
         ).forEach { (value, description) ->
@@ -106,14 +103,14 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
     http = READER / "loader/HttpPageLoader.kt"
     s = files[http]
     s = replace_once(s, "    private val canLoadAhead: () -> Boolean,\n) : PageLoader() {",
-        "    private val canLoadAhead: () -> Boolean,\n    private val liteMode: () -> Boolean,\n) : PageLoader() {",
+        "    private val canLoadAhead: () -> Boolean,\n    private val liteMode: Boolean,\n) : PageLoader() {",
         "HTTP loader constructor")
     s = replace_once(s, "        pages.loadByRollingChunked(page.index, 3, 5) { chunks ->",
-        "        pages.loadByRollingChunked(\n            page.index,\n            if (liteMode()) 1 else 3,\n            if (liteMode()) 2 else 5,\n        ) { chunks ->",
+        "        pages.loadByRollingChunked(\n            page.index,\n            if (liteMode) 1 else 3,\n            if (liteMode) 2 else 5,\n        ) { chunks ->",
         "HTTP rolling chunk")
     s = replace_once(s,
         "        val window = if (canLoadAhead()) items.indices else (index - 1)..(index + LIMITED_PAGES_AHEAD)",
-        "        val window = when {\n            liteMode() -> (index - 1)..(index + 2)\n            canLoadAhead() -> items.indices\n            else -> (index - 1)..(index + LIMITED_PAGES_AHEAD)\n        }",
+        "        val window = when {\n            liteMode -> (index - 1)..(index + 2)\n            canLoadAhead() -> items.indices\n            else -> (index - 1)..(index + LIMITED_PAGES_AHEAD)\n        }",
         "HTTP prefetch window")
     files[http] = s
 
@@ -124,7 +121,7 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
         "ChapterLoader policy import")
     s = replace_once(s,
         "            source is HttpSource -> HttpPageLoader(chapter, source, chapterCache, appScope, canLoadAhead)",
-        "            source is HttpSource -> HttpPageLoader(\n                chapter, source, chapterCache, appScope, canLoadAhead,\n                liteMode = { ReaderLitePolicy.enabled(context) },\n            )",
+        "            source is HttpSource -> HttpPageLoader(\n                chapter, source, chapterCache, appScope, canLoadAhead,\n                liteMode = ReaderLitePolicy.enabled(context),\n            )",
         "ChapterLoader HTTP call")
     files[chapter] = s
 
@@ -138,7 +135,7 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
         "Webtoon cache size")
     s = replace_once(s,
         "    /**\n     * Destroys this viewer. Called when leaving the reader or swapping viewers.\n     */",
-        "    /** Release recycled views on Android memory-pressure notifications. */\n    fun trimPageCache() {\n        recycler.setItemViewCacheSize(0)\n        recycler.recycledViewPool.clear()\n    }\n\n    /**\n     * Destroys this viewer. Called when leaving the reader or swapping viewers.\n     */",
+        "    /** Release recycled views on Android memory-pressure notifications. */\n    fun trimPageCache() {\n        recycler.recycledViewPool.clear()\n    }\n\n    /**\n     * Destroys this viewer. Called when leaving the reader or swapping viewers.\n     */",
         "Webtoon trim hook")
     files[webtoon] = s
 
@@ -177,7 +174,7 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN &&
             ReaderLitePolicy.enabled(this)
         ) {
             (viewer as? WebtoonViewer)?.trimPageCache()
@@ -243,12 +240,57 @@ import eu.kanade.tachiyomi.ui.reader.ReaderLitePolicy""",
     files[DIALOG] = dialog + LITE_UI
     files[READER / "ReaderLitePolicy.kt"] = POLICY
 
-    manifest = Path("app/src/main/AndroidManifest.xml")
-    files[manifest] = replace_once(files[manifest],
+    files[MANIFEST] = replace_once(files[MANIFEST],
         '        android:label="@string/app_name"',
-        '        android:label="Tachiyomi Lite"',
+        '        android:label="@string/kisap_name"',
         "Launcher label")
+    files[LAUNCHER_ICON] = replace_once(files[LAUNCHER_ICON],
+        """    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>""",
+        """    <background android:drawable="@color/kisap_background"/>
+    <foreground android:drawable="@drawable/kisap_foreground"/>
+    <monochrome android:drawable="@drawable/kisap_monochrome"/>""",
+        "Adaptive launcher layers")
+    files[THEMES] = replace_once(files[THEMES],
+        """        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_mihon_splash</item>
+        <item name="windowSplashScreenBackground">@color/splash</item>""",
+        """        <item name="windowSplashScreenAnimatedIcon">@drawable/kisap_foreground</item>
+        <item name="windowSplashScreenBackground">@color/kisap_background</item>""",
+        "Splash screen branding")
     return files
+
+def apply_phase_three(root: Path, generated: dict[Path, str]) -> None:
+    """Apply the patch to staged sources so a failed hunk leaves the checkout intact."""
+    with TemporaryDirectory(prefix="kisap-phase3-") as temporary:
+        staging = Path(temporary)
+        git_apply = ["git", "apply"]
+        numstat = subprocess.run(
+            [*git_apply, "--numstat", "-z", str(PHASE3_PATCH)],
+            cwd=staging,
+            check=True,
+            stdout=subprocess.PIPE,
+            encoding="utf-8",
+        ).stdout
+        paths = [Path(row.split("\t", 2)[2]) for row in numstat.split("\0") if row]
+        for path in paths:
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"Invalid Phase 3 patch path: {path}")
+            source = root / path
+            content = generated.get(path)
+            if content is None and source.is_file():
+                content = source.read_text(encoding="utf-8")
+            if content is not None:
+                dest = staging / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with dest.open("w", encoding="utf-8", newline="\n") as stream:
+                    stream.write(content)
+        subprocess.run(
+            [*git_apply, "--whitespace=error", str(PHASE3_PATCH)],
+            cwd=staging,
+            check=True,
+        )
+        generated.update({path: (staging / path).read_text(encoding="utf-8") for path in paths})
 
 def apply(root: Path, check: bool = False) -> None:
     affected = (
@@ -257,19 +299,25 @@ def apply(root: Path, check: bool = False) -> None:
         READER / "viewer/webtoon/WebtoonViewer.kt",
         READER / "ReaderActivity.kt",
         DIALOG,
-        Path("app/src/main/AndroidManifest.xml"),
+        MANIFEST,
+        LAUNCHER_ICON,
+        THEMES,
     )
     originals = {p: (root / p).read_text(encoding="utf-8") for p in affected}
     generated = patch_files(originals)
+    branding = Path(__file__).resolve().parent / "branding"
+    for resource in BRAND_RESOURCES:
+        generated[APP_RES / resource] = (branding / resource).read_text(encoding="utf-8")
+    apply_phase_three(root, generated)
     if check:
-        print(f"PASS: {len(affected)} Mihon files validated; overlay is applicable")
+        print(f"PASS: Kisap Phase 3 overlay validated across {len(generated)} files")
         return
     for path, content in generated.items():
         dest = root / path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
         print("Updated", path)
-    print("Tachiyomi Lite experimental overlay applied.")
+    print("Kisap Phase 3 overlay applied.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

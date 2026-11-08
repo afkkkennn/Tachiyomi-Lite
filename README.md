@@ -1,24 +1,30 @@
-# Tachiyomi Lite v0.2 (experimental)
+# Kisap
 
-A small, unofficial performance overlay for [Mihon](https://github.com/mihonapp/mihon), targeting lower-memory Android phones such as the Samsung Galaxy A16 5G with 4 GB RAM.
+Kisap, formerly Tachiyomi Lite, is a lightweight manga reader built as an unofficial performance overlay for [Mihon](https://github.com/mihonapp/mihon). It targets lower-memory Android phones such as the Samsung Galaxy A16 5G with 4 GB RAM.
 
-## Included in v0.1
+## Phase 3
 
-- **Auto Lite Mode** on devices reporting < 5 GiB of physical RAM. Overrides are available in Reader Settings → Lite.
+- **Resume from Library → More options.** Open the last eligible title and continue from its saved reading progress. The shortcut uses recent history and respects downloaded-only mode.
+- **Recover from a source check.** Open a failed online page in WebView, complete any verification the site asks for, and return to retry failed pages near your reading position.
+- **Source load feedback.** Browse shows when a source failed to load and offers a retry. Earlier results stay visible during a paging error, with error details and WebView available where applicable.
+- **One-handed reader controls.** Open Reader Settings → General → Reader controls and choose **Left hand** or **Right hand**. Back, bookmark, and settings move within thumb reach, with reading mode, rotation, and crop grouped under More options.
+
+## Low-memory reader features
+
+- **Balanced reader mode.** Normal preloading is the default. Choose **Always on** in Reader Settings → Lite to reduce preloading and the webtoon view cache.
 - **Bounded network prefetch:** read the visible page first, preload fewer surrounding pages and use smaller download chunks when Lite Mode is on.
 - **Smaller Webtoon view cache** and cached-view trimming after Android low-memory signals.
-- **WebView return recovery:** retry nearby failed chapter pages after the built-in chapter WebView is closed. This **does not bypass Cloudflare/CAPTCHA**.
-- **Manual retry:** in Reader Settings → Lite, tap **Retry nearby failed pages** after completing verification.
-- Custom **Tachiyomi Lite** launcher label. Debug application ID remains `app.mihon.dev` — check for conflicts if you already have Mihon debug installed.
+- **Manual retry.** In Reader Settings → Lite, tap **Retry nearby failed pages** after completing verification.
+- **Kisap branding** on the launcher and splash screen, with a monochrome launcher icon for system theming. The debug application ID is `app.mihon.dev`.
 
 The source code and settings UI are overlaid onto a pinned upstream Mihon revision during an automated build. The original Mihon repository is not copied into this repository.
 
 ## Get an APK
 
 1. Open the [Actions tab](../../actions/workflows/build-tachiyomi-lite.yml).
-2. Select **Build Tachiyomi Lite APK** → **Run workflow**, or examine the latest automatic push build.
-3. After a **successful** workflow run, open **Artifacts** and download the ZIP called `tachiyomi-lite-v0.2-samsung-a16-apk`.
-4. Extract the ZIP, then install `Tachiyomi-Lite-A16-arm64.apk` on your Samsung A16 5G.
+2. Select **Build Kisap APK** → **Run workflow**, or open the latest automatic push build.
+3. After a **successful** workflow run, open **Artifacts** and download `kisap-samsung-a16-apk`.
+4. Extract `Kisap-A16-arm64.apk` from the ZIP.
 
 **Do not install an APK from a failed build.** Android may warn about sideloading. Back up your Mihon library before migration. Debug builds aren't production releases and aren't automatically updated.
 
@@ -37,8 +43,8 @@ cd mihon
 
 For a reproducible build, check out the upstream SHA pinned in `.github/workflows/build-tachiyomi-lite.yml` before patching.
 
-## Status and limitations
+## Build verification
 
-The Android APK builds successfully on GitHub Actions for the v0.1 revision. The v0.2 revision must pass its own build before installation. Neither version is a device-benchmarked release. Local smoke tests validate changes to text anchors, not Kotlin compilation, function correctness, or on-device performance. GitHub Actions provides the first Android compile check. No device benchmarking has been performed yet. Long webtoon chapters, real sources, and login/session behavior must be tested on the Samsung Galaxy A16.
+The smoke tests check source anchors, branding resource references, and Phase 3 patch application. GitHub Actions compiles the Android app when changes to the overlay or build workflow enter a pull request.
 
 Source licensing: Mihon is Apache-2.0 licensed. This overlay is also Apache-2.0, without official endorsement or affiliation.
