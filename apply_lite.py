@@ -43,7 +43,7 @@ internal object ReaderLitePolicy {
         if (manager.isLowRamDevice) return true
         val info = ActivityManager.MemoryInfo()
         manager.getMemoryInfo(info)
-        return info.totalMem in 1 until AUTO_LIMIT_BYTES
+        return info.totalMem in 1L until AUTO_LIMIT_BYTES
     }
 }
 """
@@ -52,7 +52,7 @@ LITE_UI = """
 
 /** Reader memory-mode controls. Reopen the chapter after changing modes. */
 @Composable
-private fun LiteSettingsPage() {
+private fun LiteSettingsPage(onRetryFailedPages: () -> Unit) {
     val context = LocalContext.current
     var mode by remember { mutableIntStateOf(ReaderLitePolicy.mode(context)) }
     Column(modifier = Modifier.padding(16.dp)) {
@@ -81,6 +81,9 @@ private fun LiteSettingsPage() {
                 )
                 Text(description)
             }
+        }
+        Button(onClick = onRetryFailedPages) {
+            Text("Retry nearby failed pages")
         }
         Text(
             "Open a new chapter to apply changes. CAPTCHA challenges may still need manual verification.",
@@ -185,14 +188,39 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
         "            startActivity(intent)\n        }\n    }\n\n    private fun openChapterInBrowser() {",
         "            retryFailedPagesAfterWebView = true\n            startActivity(intent)\n        }\n    }\n\n    private fun openChapterInBrowser() {",
         "Reader WebView flag")
+    s = replace_once(s,
+        "                        onHideMenus = { setMenuVisibility(false) },\\n                        viewModel = settingsViewModel,",
+        "                        onHideMenus = { setMenuVisibility(false) },\\n                        onRetryFailedPages = ::retryNearbyFailedPages,\\n                        viewModel = settingsViewModel,",
+        "Reader settings retry callback")
+    s = replace_once(s,
+        "    override fun onPause() {\\n        viewModel.saveHistory()\\n        super.onPause()\\n    }",
+        """    private fun retryNearbyFailedPages() {
+        val state = viewModel.state.value
+        val chapter = state.currentChapter ?: return
+        val index = (state.currentPage - 1).coerceAtLeast(0)
+        chapter.pages.orEmpty()
+            .filter { it.index in (index - 1)..(index + 3) && it.status is Page.State.Error }
+            .forEach { page -> chapter.pageLoader?.retryPage(page) }
+    }
+
+    override fun onPause() {
+        viewModel.saveHistory()
+        super.onPause()
+    }""",
+        "Reader manual retry")
     files[reader] = s
 
     dialog = files[DIALOG]
+    dialog = replace_once(dialog,
+        "    onHideMenus: () -> Unit,\\n    viewModel: ReaderSettingsViewModel,",
+        "    onHideMenus: () -> Unit,\\n    onRetryFailedPages: () -> Unit,\\n    viewModel: ReaderSettingsViewModel,",
+        "Reader dialog retry parameter")
     dialog = replace_once(dialog, "import androidx.compose.foundation.layout.Column",
         """import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -210,7 +238,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderLitePolicy""",
         '        stringResource(MR.strings.custom_filter),\n        "Lite",\n    )',
         "Reader settings Lite tab")
     dialog = replace_once(dialog, "                    2 -> ColorFilterPage(viewModel)",
-        "                    2 -> ColorFilterPage(viewModel)\n                    3 -> LiteSettingsPage()",
+        "                    2 -> ColorFilterPage(viewModel)\n                    3 -> LiteSettingsPage(onRetryFailedPages)",
         "Reader settings page")
     files[DIALOG] = dialog + LITE_UI
     files[READER / "ReaderLitePolicy.kt"] = POLICY
