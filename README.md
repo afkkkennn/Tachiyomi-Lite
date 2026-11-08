@@ -4,7 +4,7 @@ Kisap, formerly Tachiyomi Lite, is a lightweight manga reader built as an unoffi
 
 ## Phase 3
 
-- **Resume from Library.** Open the last eligible title and continue from its saved reading progress. The shortcut uses recent history and respects downloaded-only mode.
+- **Resume from Library → More options.** Open the last eligible title and continue from its saved reading progress. The shortcut uses recent history and respects downloaded-only mode.
 - **Recover from a source check.** Open a failed online page in WebView, complete any verification the site asks for, and return to retry failed pages near your reading position.
 - **Source load feedback.** Browse shows when a source failed to load and offers a retry. Earlier results stay visible during a paging error, with error details and WebView available where applicable.
 - **One-handed reader controls.** Open Reader Settings → General → Reader controls and choose **Left hand** or **Right hand**. Back, bookmark, and settings move within thumb reach, with reading mode, rotation, and crop grouped under More options.

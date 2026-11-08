@@ -400,69 +400,45 @@ index 0000000..749beff
 +        if (failure.isAppend) MR.strings.browse_source_load_more_failed else MR.strings.browse_source_load_failed,
 +    )
 +}
-diff --git a/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt b/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt
-new file mode 100644
-index 0000000..213920b
---- /dev/null
-+++ b/app/src/main/java/eu/kanade/presentation/library/components/LibraryResumeCard.kt
-@@ -0,0 +1,57 @@
-+package eu.kanade.presentation.library.components
-+
-+import androidx.compose.foundation.layout.Arrangement
-+import androidx.compose.foundation.layout.Column
-+import androidx.compose.foundation.layout.Row
-+import androidx.compose.foundation.layout.fillMaxWidth
-+import androidx.compose.foundation.layout.padding
-+import androidx.compose.material3.Card
-+import androidx.compose.material3.Icon
-+import androidx.compose.material3.MaterialTheme
-+import androidx.compose.material3.Text
-+import androidx.compose.runtime.Composable
-+import androidx.compose.ui.Alignment
-+import androidx.compose.ui.Modifier
-+import androidx.compose.ui.text.style.TextOverflow
-+import androidx.compose.ui.unit.dp
-+import mihon.icons.materialsymbols.MaterialSymbols
-+import mihon.icons.materialsymbols.roundedfilled.PlayArrow
-+import tachiyomi.i18n.MR
-+import tachiyomi.presentation.core.i18n.stringResource
-+
-+@Composable
-+fun LibraryResumeCard(
-+    title: String,
-+    chapterName: String,
-+    onClick: () -> Unit,
-+    modifier: Modifier = Modifier,
-+) {
-+    Card(
-+        onClick = onClick,
-+        modifier = modifier.fillMaxWidth(),
-+    ) {
-+        Row(
-+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-+            horizontalArrangement = Arrangement.spacedBy(12.dp),
-+            verticalAlignment = Alignment.CenterVertically,
-+        ) {
-+            Icon(
-+                imageVector = MaterialSymbols.RoundedFilled.PlayArrow,
-+                contentDescription = null,
-+                tint = MaterialTheme.colorScheme.primary,
-+            )
-+            Column {
-+                Text(
-+                    text = stringResource(MR.strings.action_resume),
-+                    style = MaterialTheme.typography.titleSmall,
-+                )
-+                Text(
-+                    text = if (chapterName.isBlank()) title else "$title · $chapterName",
-+                    style = MaterialTheme.typography.bodySmall,
-+                    maxLines = 1,
-+                    overflow = TextOverflow.Ellipsis,
-+                )
-+            }
-+        }
-+    }
-+}
+diff --git a/app/src/main/java/eu/kanade/presentation/library/components/LibraryToolbar.kt b/app/src/main/java/eu/kanade/presentation/library/components/LibraryToolbar.kt
+index d624b0d..7937d02 100644
+--- a/app/src/main/java/eu/kanade/presentation/library/components/LibraryToolbar.kt
++++ b/app/src/main/java/eu/kanade/presentation/library/components/LibraryToolbar.kt
+@@ -36,6 +36,7 @@ fun LibraryToolbar(
+     onClickRefresh: () -> Unit,
+     onClickGlobalUpdate: () -> Unit,
+     onClickOpenRandomManga: () -> Unit,
++    onClickResume: () -> Unit,
+     searchQuery: String?,
+     onSearchQueryChange: (String?) -> Unit,
+     scrollBehavior: TopAppBarScrollBehavior?,
+@@ -55,6 +56,7 @@ fun LibraryToolbar(
+         onClickRefresh = onClickRefresh,
+         onClickGlobalUpdate = onClickGlobalUpdate,
+         onClickOpenRandomManga = onClickOpenRandomManga,
++        onClickResume = onClickResume,
+         scrollBehavior = scrollBehavior,
+     )
+ }
+@@ -69,6 +71,7 @@ private fun LibraryRegularToolbar(
+     onClickRefresh: () -> Unit,
+     onClickGlobalUpdate: () -> Unit,
+     onClickOpenRandomManga: () -> Unit,
++    onClickResume: () -> Unit,
+     scrollBehavior: TopAppBarScrollBehavior?,
+ ) {
+     val pillAlpha = if (isSystemInDarkTheme()) 0.12f else 0.08f
+@@ -102,6 +105,10 @@ private fun LibraryRegularToolbar(
+                         iconTint = filterTint,
+                         onClick = onClickFilter,
+                     ),
++                    AppBar.OverflowAction(
++                        title = stringResource(MR.strings.action_resume),
++                        onClick = onClickResume,
++                    ),
+                     AppBar.OverflowAction(
+                         title = stringResource(MR.strings.action_update_library),
+                         onClick = onClickGlobalUpdate,
 diff --git a/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt b/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt
 index 085f9c9..524a32a 100644
 --- a/app/src/main/java/eu/kanade/presentation/reader/ReaderError.kt
@@ -700,162 +676,39 @@ index abcdf16..08d7063 100644
          }
 
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
-index becfc91..30ebfaa 100644
+index becfc91..b2618aa 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryTab.kt
-@@ -5,6 +5,7 @@ import androidx.activity.compose.ReportDrawnWhen
- import androidx.compose.animation.graphics.res.animatedVectorResource
- import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
- import androidx.compose.animation.graphics.vector.AnimatedImageVector
-+import androidx.compose.foundation.layout.Column
- import androidx.compose.foundation.layout.padding
- import androidx.compose.material3.SnackbarHost
- import androidx.compose.material3.SnackbarHostState
-@@ -18,7 +19,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
- import androidx.compose.ui.platform.LocalContext
- import androidx.compose.ui.platform.LocalHapticFeedback
- import androidx.compose.ui.platform.LocalUriHandler
-+import androidx.compose.ui.unit.dp
- import androidx.compose.ui.util.fastAll
-+import androidx.lifecycle.Lifecycle
- import androidx.lifecycle.compose.collectAsStateWithLifecycle
- import cafe.adriel.voyager.navigator.LocalNavigator
- import cafe.adriel.voyager.navigator.Navigator
-@@ -30,6 +33,7 @@ import eu.kanade.presentation.category.components.ChangeCategoryDialog
- import eu.kanade.presentation.library.DeleteLibraryMangaDialog
- import eu.kanade.presentation.library.LibrarySettingsDialog
- import eu.kanade.presentation.library.components.LibraryContent
-+import eu.kanade.presentation.library.components.LibraryResumeCard
- import eu.kanade.presentation.library.components.LibraryToolbar
- import eu.kanade.presentation.manga.components.LibraryBottomActionMenu
- import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
-@@ -90,6 +94,11 @@ data object LibraryTab : Tab {
-         val viewModel = metroViewModel<LibraryViewModel>()
-         val settingsViewModel = metroViewModel<LibrarySettingsViewModel>()
-         val state by viewModel.state.collectAsStateWithLifecycle()
-+        val resumeTarget = if (!state.isLoading && state.searchQuery == null && !state.selectionMode) {
-+            viewModel.resumeTarget.collectAsStateWithLifecycle(minActiveState = Lifecycle.State.RESUMED).value
-+        } else {
-+            null
-+        }
-
-         val snackbarHostState = remember { SnackbarHostState() }
-
-@@ -113,33 +122,56 @@ data object LibraryTab : Tab {
-                     defaultCategoryTitle = stringResource(MR.strings.label_default),
-                     page = state.coercedActiveCategoryIndex,
-                 )
--                LibraryToolbar(
--                    hasActiveFilters = state.hasActiveFilters,
--                    selectedCount = state.selection.size,
--                    title = title,
--                    onClickUnselectAll = viewModel::clearSelection,
--                    onClickSelectAll = viewModel::selectAll,
--                    onClickInvertSelection = viewModel::invertSelection,
--                    onClickFilter = viewModel::showSettingsDialog,
--                    onClickRefresh = { scope.launch { onClickRefresh(state.activeCategory) } },
--                    onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
--                    onClickOpenRandomManga = {
--                        scope.launch {
--                            val randomItem = viewModel.getRandomLibraryItemForCurrentCategory()
--                            if (randomItem != null) {
--                                navigator.push(MangaScreen(randomItem.libraryManga.manga.id))
--                            } else {
--                                snackbarHostState.showSnackbar(
--                                    context.stringResource(MR.strings.information_no_entries_found),
--                                )
-+                Column {
-+                    LibraryToolbar(
-+                        hasActiveFilters = state.hasActiveFilters,
-+                        selectedCount = state.selection.size,
-+                        title = title,
-+                        onClickUnselectAll = viewModel::clearSelection,
-+                        onClickSelectAll = viewModel::selectAll,
-+                        onClickInvertSelection = viewModel::invertSelection,
-+                        onClickFilter = viewModel::showSettingsDialog,
-+                        onClickRefresh = { scope.launch { onClickRefresh(state.activeCategory) } },
-+                        onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
-+                        onClickOpenRandomManga = {
-+                            scope.launch {
-+                                val randomItem = viewModel.getRandomLibraryItemForCurrentCategory()
-+                                if (randomItem != null) {
-+                                    navigator.push(MangaScreen(randomItem.libraryManga.manga.id))
-+                                } else {
-+                                    snackbarHostState.showSnackbar(
-+                                        context.stringResource(MR.strings.information_no_entries_found),
-+                                    )
-+                                }
+@@ -135,6 +135,16 @@ data object LibraryTab : Tab {
                              }
--                        }
--                    },
--                    searchQuery = state.searchQuery,
--                    onSearchQueryChange = viewModel::search,
--                    // For scroll overlay when no tab
--                    scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
--                )
-+                        },
-+                        searchQuery = state.searchQuery,
-+                        onSearchQueryChange = viewModel::search,
-+                        // For scroll overlay when no tab
-+                        scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
-+                    )
-+                    if (resumeTarget != null) {
-+                        LibraryResumeCard(
-+                            title = resumeTarget.title,
-+                            chapterName = resumeTarget.chapter.name,
-+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
-+                            onClick = {
-+                                scope.launch {
-+                                    val chapter = viewModel.getResumeChapter(resumeTarget)
-+                                    if (chapter != null) {
-+                                        context.startActivity(
-+                                            ReaderActivity.newIntent(context, chapter.mangaId, chapter.id),
-+                                        )
-+                                    } else {
-+                                        snackbarHostState.showSnackbar(
-+                                            context.stringResource(MR.strings.no_next_chapter),
-+                                        )
-+                                    }
-+                                }
-+                            },
-+                        )
-+                    }
-+                }
-             },
-             bottomBar = {
-                 LibraryBottomActionMenu(
+                         }
+                     },
++                    onClickResume = {
++                        scope.launch {
++                            val chapter = viewModel.resumeChapter()
++                            if (chapter != null) {
++                                context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
++                            } else {
++                                snackbarHostState.showSnackbar(context.stringResource(MR.strings.no_next_chapter))
++                            }
++                        }
++                    },
+                     searchQuery = state.searchQuery,
+                     onSearchQueryChange = viewModel::search,
+                     // For scroll overlay when no tab
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
-index f0d30fe..23b621a 100644
+index f0d30fe..252551d 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/library/LibraryViewModel.kt
-@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.Flow
- import kotlinx.coroutines.flow.MutableStateFlow
- import kotlinx.coroutines.flow.SharingStarted
- import kotlinx.coroutines.flow.StateFlow
-+import kotlinx.coroutines.flow.catch
+@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
  import kotlinx.coroutines.flow.combine
  import kotlinx.coroutines.flow.debounce
  import kotlinx.coroutines.flow.distinctUntilChanged
-@@ -40,11 +41,13 @@ import kotlinx.coroutines.flow.flatMapLatest
++import kotlinx.coroutines.flow.first
+ import kotlinx.coroutines.flow.flatMapLatest
  import kotlinx.coroutines.flow.flowOf
  import kotlinx.coroutines.flow.flowOn
- import kotlinx.coroutines.flow.map
-+import kotlinx.coroutines.flow.mapLatest
- import kotlinx.coroutines.flow.stateIn
- import kotlinx.coroutines.flow.update
- import kotlinx.coroutines.launch
- import kotlinx.coroutines.plus
- import kotlinx.coroutines.withContext
-+import logcat.LogPriority
- import mihon.core.common.utils.mutate
- import mihon.core.metro.AppCoroutineScope
- import mihon.domain.library.model.search.QueryNode
-@@ -54,12 +57,15 @@ import tachiyomi.core.common.preference.TriState
- import tachiyomi.core.common.util.lang.SubscriberGate
- import tachiyomi.core.common.util.lang.compareToWithCollator
- import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
-+import tachiyomi.core.common.util.system.logcat
- import tachiyomi.domain.category.interactor.GetCategories
+@@ -58,8 +59,10 @@ import tachiyomi.domain.category.interactor.GetCategories
  import tachiyomi.domain.category.interactor.SetMangaCategories
  import tachiyomi.domain.category.model.Category
  import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
@@ -866,7 +719,7 @@ index f0d30fe..23b621a 100644
  import tachiyomi.domain.history.interactor.GetNextChapters
  import tachiyomi.domain.library.model.LibraryDisplayMode
  import tachiyomi.domain.library.model.LibraryManga
-@@ -67,6 +73,7 @@ import tachiyomi.domain.library.model.LibrarySort
+@@ -67,6 +70,7 @@ import tachiyomi.domain.library.model.LibrarySort
  import tachiyomi.domain.library.model.sort
  import tachiyomi.domain.library.service.LibraryPreferences
  import tachiyomi.domain.manga.interactor.GetLibraryManga
@@ -874,7 +727,7 @@ index f0d30fe..23b621a 100644
  import tachiyomi.domain.manga.model.Manga
  import tachiyomi.domain.manga.model.MangaUpdate
  import tachiyomi.domain.manga.model.applyFilter
-@@ -85,7 +92,10 @@ class LibraryViewModel(
+@@ -85,7 +89,10 @@ class LibraryViewModel(
      private val getLibraryManga: GetLibraryManga,
      private val getCategories: GetCategories,
      private val getTracksPerManga: GetTracksPerManga,
@@ -885,45 +738,25 @@ index f0d30fe..23b621a 100644
      private val getChaptersByMangaId: GetChaptersByMangaId,
      private val getBookmarkedChaptersByMangaId: GetBookmarkedChaptersByMangaId,
      private val setReadStatus: SetReadStatus,
-@@ -206,6 +216,30 @@ class LibraryViewModel(
-     }
-         .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
-
-+    // Independent of the grid so waiting for history never delays opening the Library.
-+    val resumeTarget: StateFlow<ResumeTarget?> = preferences.downloadedOnly.changes()
-+        .distinctUntilChanged()
-+        .flatMapLatest { downloadedOnly ->
-+            val downloadChanges = if (downloadedOnly) downloadCache.changes else flowOf(Unit)
-+            combine(getHistory.subscribeForResume(), downloadChanges) { history, _ -> history }
-+                .mapLatest { history ->
-+                    history.firstNotNullOfOrNull { (mangaId, chapterId) ->
-+                        val manga = getManga.await(mangaId) ?: return@firstNotNullOfOrNull null
-+                        val chapter = getNextChapters.awaitFirstUnreadFrom(manga, chapterId) {
-+                            it.canResume(manga, downloadedOnly)
-+                        } ?: return@firstNotNullOfOrNull null
-+                        ResumeTarget(manga.title, chapter)
-+                    }
-+                }
-+        }
-+        .distinctUntilChanged()
-+        .catch {
-+            logcat(LogPriority.ERROR, it)
-+            emit(null)
-+        }
-+        .flowOn(Dispatchers.Default)
-+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), null)
-+
-     private data class DisplayPreferences(
-         val showCategoryTabs: Boolean,
-         val showMangaCount: Boolean,
-@@ -493,6 +527,25 @@ class LibraryViewModel(
+@@ -493,6 +500,36 @@ class LibraryViewModel(
          return withContext(Dispatchers.Default) { chapters.getNextUnread(manga, downloadManager) }
      }
 
-+    suspend fun getResumeChapter(target: ResumeTarget): Chapter? = withContext(Dispatchers.Default) {
++    suspend fun resumeChapter(): Chapter? = withContext(Dispatchers.Default) {
++        val downloadedOnly = preferences.downloadedOnly.get()
++        getHistory.subscribeForResume().first().firstNotNullOfOrNull { (mangaId, chapterId) ->
++            val manga = getManga.await(mangaId) ?: return@firstNotNullOfOrNull null
++            val chapter = getNextChapters.awaitFirstUnreadFrom(manga, chapterId) {
++                it.canResume(manga, downloadedOnly)
++            } ?: return@firstNotNullOfOrNull null
++            getResumeChapter(chapter)
++        }
++    }
++
++    private suspend fun getResumeChapter(target: Chapter): Chapter? = withContext(Dispatchers.Default) {
 +        // The displayed chapter may have been removed or marked read since the last update.
-+        val chapter = getChapter.await(target.chapter.id)
-+            ?.takeIf { !it.read && it.mangaId == target.chapter.mangaId }
++        val chapter = getChapter.await(target.id)
++            ?.takeIf { !it.read && it.mangaId == target.mangaId }
 +            ?: return@withContext null
 +
 +        if (preferences.downloadedOnly.get()) {
@@ -942,17 +775,8 @@ index f0d30fe..23b621a 100644
      /**
       * Queues the amount specified of unread chapters from the list of selected manga
       */
-@@ -787,6 +840,8 @@ class LibraryViewModel(
-         val favoritesById by lazy { favorites.associateBy { it.id } }
-     }
-
-+    data class ResumeTarget(val title: String, val chapter: Chapter)
-+
-     @Immutable
-     data class State(
-         val isInitialized: Boolean = false,
 diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
-index 95938e0..cb1c0c4 100644
+index 57df208..85bcefd 100644
 --- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
 +++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt
 @@ -11,6 +11,7 @@ import android.os.Bundle
@@ -2002,7 +1826,7 @@ index d036ae1..f913a3a 100644
          return database.historyQueries
              .getReadDuration()
 diff --git a/data/src/main/sqldelight/tachiyomi/data/history.sq b/data/src/main/sqldelight/tachiyomi/data/history.sq
-index 36ba894..0041f23 100644
+index 36ba894..d1a2e97 100644
 --- a/data/src/main/sqldelight/tachiyomi/data/history.sq
 +++ b/data/src/main/sqldelight/tachiyomi/data/history.sq
 @@ -26,6 +26,13 @@ FROM history
