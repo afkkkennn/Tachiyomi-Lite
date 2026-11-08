@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Fail-closed Mihon source overlay for the experimental Tachiyomi Lite reader."""
+"""Fail-closed Mihon source overlay for the experimental Kisap reader."""
 from pathlib import Path
 import argparse
 
 READER = Path("app/src/main/java/eu/kanade/tachiyomi/ui/reader")
 DIALOG = Path("app/src/main/java/eu/kanade/presentation/reader/settings/ReaderSettingsDialog.kt")
+MANIFEST = Path("app/src/main/AndroidManifest.xml")
+APP_RES = Path("app/src/main/res")
+LAUNCHER_ICON = APP_RES / "mipmap/ic_launcher.xml"
+THEMES = APP_RES / "values/themes.xml"
+BRAND_RESOURCES = (
+    Path("drawable/kisap_foreground.xml"),
+    Path("drawable/kisap_monochrome.xml"),
+    Path("values/kisap_brand.xml"),
+)
 
 POLICY = """package eu.kanade.tachiyomi.ui.reader
 
@@ -243,11 +252,24 @@ import eu.kanade.tachiyomi.ui.reader.ReaderLitePolicy""",
     files[DIALOG] = dialog + LITE_UI
     files[READER / "ReaderLitePolicy.kt"] = POLICY
 
-    manifest = Path("app/src/main/AndroidManifest.xml")
-    files[manifest] = replace_once(files[manifest],
+    files[MANIFEST] = replace_once(files[MANIFEST],
         '        android:label="@string/app_name"',
-        '        android:label="Tachiyomi Lite"',
+        '        android:label="@string/kisap_name"',
         "Launcher label")
+    files[LAUNCHER_ICON] = replace_once(files[LAUNCHER_ICON],
+        """    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>""",
+        """    <background android:drawable="@color/kisap_background"/>
+    <foreground android:drawable="@drawable/kisap_foreground"/>
+    <monochrome android:drawable="@drawable/kisap_monochrome"/>""",
+        "Adaptive launcher layers")
+    files[THEMES] = replace_once(files[THEMES],
+        """        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_mihon_splash</item>
+        <item name="windowSplashScreenBackground">@color/splash</item>""",
+        """        <item name="windowSplashScreenAnimatedIcon">@drawable/kisap_foreground</item>
+        <item name="windowSplashScreenBackground">@color/kisap_background</item>""",
+        "Splash screen branding")
     return files
 
 def apply(root: Path, check: bool = False) -> None:
@@ -257,19 +279,24 @@ def apply(root: Path, check: bool = False) -> None:
         READER / "viewer/webtoon/WebtoonViewer.kt",
         READER / "ReaderActivity.kt",
         DIALOG,
-        Path("app/src/main/AndroidManifest.xml"),
+        MANIFEST,
+        LAUNCHER_ICON,
+        THEMES,
     )
     originals = {p: (root / p).read_text(encoding="utf-8") for p in affected}
     generated = patch_files(originals)
+    branding = Path(__file__).resolve().parent / "branding"
+    for resource in BRAND_RESOURCES:
+        generated[APP_RES / resource] = (branding / resource).read_text(encoding="utf-8")
     if check:
-        print(f"PASS: {len(affected)} Mihon files validated; overlay is applicable")
+        print(f"PASS: {len(affected)} Mihon files and {len(BRAND_RESOURCES)} branding resources ready for overlay")
         return
     for path, content in generated.items():
         dest = root / path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
         print("Updated", path)
-    print("Tachiyomi Lite experimental overlay applied.")
+    print("Kisap experimental overlay applied.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
