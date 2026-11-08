@@ -2017,8 +2017,8 @@ index 36ba894..0041f23 100644
 +    JOIN chapter C ON C.id = H.chapter_id AND C.manga_id = H.manga_id
 +    WHERE H.read_at IS NOT NULL
 +      AND NOT EXISTS (
-+          SELECT 1 FROM excluded_scanlator E
-+          WHERE E.manga_id = H.manga_id AND E.scanlator = C.remote_scanlator
++          SELECT 1 FROM excluded_scanlator
++          WHERE excluded_scanlator.manga_id = H.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
 +      )
 +    GROUP BY H.manga_id
 +    HAVING EXISTS (SELECT 1 FROM manga M WHERE M.id = H.manga_id)
@@ -2027,8 +2027,8 @@ index 36ba894..0041f23 100644
 +        FROM chapter C
 +        WHERE C.manga_id = H.manga_id AND C.user_read = 0
 +          AND NOT EXISTS (
-+              SELECT 1 FROM excluded_scanlator E
-+              WHERE E.manga_id = C.manga_id AND E.scanlator = C.remote_scanlator
++              SELECT 1 FROM excluded_scanlator
++              WHERE excluded_scanlator.manga_id = C.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
 +          )
 +    )
 +    ORDER BY read_at DESC, H.manga_id DESC
@@ -2041,8 +2041,8 @@ index 36ba894..0041f23 100644
 +    JOIN chapter C ON C.id = candidate.chapter_id AND C.manga_id = candidate.manga_id
 +    WHERE candidate.manga_id = latest.manga_id AND candidate.read_at = latest.read_at
 +      AND NOT EXISTS (
-+          SELECT 1 FROM excluded_scanlator E
-+          WHERE E.manga_id = candidate.manga_id AND E.scanlator = C.remote_scanlator
++          SELECT 1 FROM excluded_scanlator
++          WHERE excluded_scanlator.manga_id = candidate.manga_id AND excluded_scanlator.scanlator = C.remote_scanlator
 +      )
 +    ORDER BY candidate.id DESC
 +    LIMIT 1
