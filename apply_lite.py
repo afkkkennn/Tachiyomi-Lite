@@ -189,11 +189,11 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
         "            retryFailedPagesAfterWebView = true\n            startActivity(intent)\n        }\n    }\n\n    private fun openChapterInBrowser() {",
         "Reader WebView flag")
     s = replace_once(s,
-        "                        onHideMenus = { setMenuVisibility(false) },\\n                        viewModel = settingsViewModel,",
-        "                        onHideMenus = { setMenuVisibility(false) },\\n                        onRetryFailedPages = ::retryNearbyFailedPages,\\n                        viewModel = settingsViewModel,",
+        "                        onHideMenus = { setMenuVisibility(false) },\n                        viewModel = settingsViewModel,",
+        "                        onHideMenus = { setMenuVisibility(false) },\n                        onRetryFailedPages = ::retryNearbyFailedPages,\n                        viewModel = settingsViewModel,",
         "Reader settings retry callback")
     s = replace_once(s,
-        "    override fun onPause() {\\n        viewModel.saveHistory()\\n        super.onPause()\\n    }",
+        "    override fun onPause() {\n        viewModel.saveHistory()\n        super.onPause()\n    }",
         """    private fun retryNearbyFailedPages() {
         val state = viewModel.state.value
         val chapter = state.currentChapter ?: return
@@ -212,8 +212,8 @@ def patch_files(originals: dict[Path, str]) -> dict[Path, str]:
 
     dialog = files[DIALOG]
     dialog = replace_once(dialog,
-        "    onHideMenus: () -> Unit,\\n    viewModel: ReaderSettingsViewModel,",
-        "    onHideMenus: () -> Unit,\\n    onRetryFailedPages: () -> Unit,\\n    viewModel: ReaderSettingsViewModel,",
+        "    onHideMenus: () -> Unit,\n    viewModel: ReaderSettingsViewModel,",
+        "    onHideMenus: () -> Unit,\n    onRetryFailedPages: () -> Unit,\n    viewModel: ReaderSettingsViewModel,",
         "Reader dialog retry parameter")
     dialog = replace_once(dialog, "import androidx.compose.foundation.layout.Column",
         """import androidx.compose.foundation.layout.Column
