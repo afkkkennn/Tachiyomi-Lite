@@ -2005,7 +2005,7 @@ diff --git a/data/src/main/sqldelight/tachiyomi/data/history.sq b/data/src/main/
 index 36ba894..0041f23 100644
 --- a/data/src/main/sqldelight/tachiyomi/data/history.sq
 +++ b/data/src/main/sqldelight/tachiyomi/data/history.sq
-@@ -26,6 +26,37 @@ FROM history
+@@ -26,6 +26,46 @@ FROM history
  WHERE manga_id IN :mangaIds
  ORDER BY manga_id, id;
 
